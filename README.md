@@ -6,6 +6,10 @@ API-only Docker WebUI for the native [nashsu/llm_wiki](https://github.com/nashsu
 
 LLM Wiki WebUI is a separate, non-invasive companion project. It does not modify or embed the native LLM Wiki runtime. Instead, it serves a browser UI and proxies browser requests to the local LLM Wiki HTTP API.
 
+## Demo Screenshot
+
+![LLM Wiki WebUI demo screenshot](docs/assets/demo-screenshot.png)
+
 ## What It Provides
 
 - Project switching through the native API.
