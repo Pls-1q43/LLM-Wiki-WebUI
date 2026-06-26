@@ -6,6 +6,8 @@ API-only Docker WebUI for the native [nashsu/llm_wiki](https://github.com/nashsu
 
 LLM Wiki WebUI is a separate, non-invasive companion project. It does not modify or embed the native LLM Wiki runtime. Instead, it serves a browser UI and proxies browser requests to the local LLM Wiki HTTP API.
 
+Its main use case is making your LLM Wiki available across your LAN, and in selected public-network scenarios. Pair it with tools such as ZeroTier or other private networking / tunneling solutions to access your LLM Wiki from any device, anywhere.
+
 ## Demo Screenshot
 
 ![LLM Wiki WebUI demo screenshot](docs/assets/demo-screenshot.png)
@@ -20,7 +22,7 @@ LLM Wiki WebUI is a separate, non-invasive companion project. It does not modify
 - Review list, source rescan, API diagnostics, and read-only lint checks.
 - Clear disabled states for native-only actions that the HTTP API does not expose yet.
 
-## Quick Start With Docker
+## One-Line Docker Start
 
 Start the native LLM Wiki desktop app first and enable its local HTTP API. The default native API address is:
 
@@ -28,11 +30,10 @@ Start the native LLM Wiki desktop app first and enable its local HTTP API. The d
 http://127.0.0.1:19828/api/v1
 ```
 
-Then run this WebUI:
+Then run this WebUI with one command:
 
 ```bash
-export LLM_WIKI_API_TOKEN=your-token-if-required
-docker compose up --build
+docker run -d --name llm-wiki-webui --restart unless-stopped -p 19829:19829 --add-host=host.docker.internal:host-gateway -e LLM_WIKI_API_BASE_URL=http://host.docker.internal:19828 -e LLM_WIKI_API_TOKEN=your-token-if-required ghcr.io/pls-1q43/llm-wiki-webui:latest
 ```
 
 Open:
@@ -41,10 +42,37 @@ Open:
 http://localhost:19829
 ```
 
-The compose file maps the container to the host API through:
+## Pasteable Compose
 
-```text
-LLM_WIKI_API_BASE_URL=http://host.docker.internal:19828
+Save this as `compose.yaml`, adjust the token if your native API requires auth, then run `docker compose up -d`.
+
+```yaml
+services:
+  llm-wiki-webui:
+    image: ghcr.io/pls-1q43/llm-wiki-webui:latest
+    container_name: llm-wiki-webui
+    restart: unless-stopped
+    ports:
+      # WebUI address on the host.
+      - "19829:19829"
+    environment:
+      # Port used by the WebUI inside the container.
+      PORT: "19829"
+      # Native LLM Wiki API on the host machine.
+      LLM_WIKI_API_BASE_URL: "http://host.docker.internal:19828"
+      # Optional. Set only when native LLM Wiki API auth is enabled.
+      LLM_WIKI_API_TOKEN: ""
+      # Optional upstream API timeout.
+      LLM_WIKI_PROXY_TIMEOUT_MS: "30000"
+    extra_hosts:
+      # Needed on Linux so containers can reach services running on the host.
+      - "host.docker.internal:host-gateway"
+```
+
+For local development before a published image is available, this repository also includes a buildable `docker-compose.yml`:
+
+```bash
+docker compose up --build
 ```
 
 Linux support is included through:
@@ -87,13 +115,13 @@ Useful scripts:
 - `npm run build` builds the production WebUI.
 - `npm start` serves `dist/` and proxies `/api/llm-wiki/*`.
 
-## Relationship To LLM Wiki
+## License And Relationship To LLM Wiki
 
 This project is designed to follow the user experience of [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki) where the public HTTP API allows it. Some UI logic and visual patterns are adapted from the original GPLv3 project with attribution.
 
 Native-only capabilities remain disabled until LLM Wiki exposes matching HTTP endpoints. Examples include project creation, source import/delete, wiki editing, auto-fix, chat, and Deep Research orchestration.
 
-See [NOTICE](NOTICE) for attribution and [LICENSE](LICENSE) for licensing.
+LLM Wiki WebUI follows the upstream project license: GNU General Public License v3.0. See [NOTICE](NOTICE) for attribution and [LICENSE](LICENSE) for licensing.
 
 ---
 
@@ -105,6 +133,8 @@ LLM Wiki WebUI 是原生桌面应用 [nashsu/llm_wiki](https://github.com/nashsu
 
 这是一个独立、非侵入式的伴随项目。它不会修改或嵌入原生 LLM Wiki 运行时，而是提供一个浏览器界面，并把浏览器请求代理到本机运行中的 LLM Wiki HTTP API。
 
+它的主要用途是让整个局域网（在特定情况下的公网环境）可以访问你的 LLM Wiki，你可以搭配 ZeroTier 等内网穿透工具，在任意地点，用任意设备访问你的 LLM Wiki。
+
 ## 功能概览
 
 - 通过原生 API 切换项目。
@@ -115,7 +145,7 @@ LLM Wiki WebUI 是原生桌面应用 [nashsu/llm_wiki](https://github.com/nashsu
 - 支持待审阅列表、资料重新扫描、API 诊断、只读 Wiki 检查。
 - 对 HTTP API 尚未暴露的原生功能展示明确的禁用状态。
 
-## Docker 快速上手
+## Docker 一行启动
 
 先启动原生 LLM Wiki 桌面应用，并启用本地 HTTP API。默认原生 API 地址为：
 
@@ -123,11 +153,10 @@ LLM Wiki WebUI 是原生桌面应用 [nashsu/llm_wiki](https://github.com/nashsu
 http://127.0.0.1:19828/api/v1
 ```
 
-然后启动 WebUI：
+然后用一行命令启动 WebUI：
 
 ```bash
-export LLM_WIKI_API_TOKEN=如果需要鉴权则填入你的-token
-docker compose up --build
+docker run -d --name llm-wiki-webui --restart unless-stopped -p 19829:19829 --add-host=host.docker.internal:host-gateway -e LLM_WIKI_API_BASE_URL=http://host.docker.internal:19828 -e LLM_WIKI_API_TOKEN=如果需要鉴权则填入你的-token ghcr.io/pls-1q43/llm-wiki-webui:latest
 ```
 
 打开：
@@ -136,10 +165,37 @@ docker compose up --build
 http://localhost:19829
 ```
 
-`docker-compose.yml` 默认通过下面的地址访问宿主机上的原生 API：
+## 可直接粘贴的 Compose
 
-```text
-LLM_WIKI_API_BASE_URL=http://host.docker.internal:19828
+保存为 `compose.yaml`，按需修改 Token，然后运行 `docker compose up -d`。
+
+```yaml
+services:
+  llm-wiki-webui:
+    image: ghcr.io/pls-1q43/llm-wiki-webui:latest
+    container_name: llm-wiki-webui
+    restart: unless-stopped
+    ports:
+      # 宿主机访问 WebUI 的端口。
+      - "19829:19829"
+    environment:
+      # 容器内 WebUI 监听端口。
+      PORT: "19829"
+      # 宿主机上原生 LLM Wiki API 的地址。
+      LLM_WIKI_API_BASE_URL: "http://host.docker.internal:19828"
+      # 可选。只有原生 LLM Wiki API 开启鉴权时才需要填写。
+      LLM_WIKI_API_TOKEN: ""
+      # 可选。代理请求上游 API 的超时时间。
+      LLM_WIKI_PROXY_TIMEOUT_MS: "30000"
+    extra_hosts:
+      # Linux 下用于让容器访问宿主机服务。
+      - "host.docker.internal:host-gateway"
+```
+
+在镜像发布前，本仓库也包含可本地构建的 `docker-compose.yml`：
+
+```bash
+docker compose up --build
 ```
 
 Linux 下已经包含：
@@ -182,10 +238,10 @@ LLM_WIKI_API_BASE_URL=http://127.0.0.1:19828 PORT=19829 npm start
 - `npm run build` 构建生产版本。
 - `npm start` 提供 `dist/` 静态文件，并代理 `/api/llm-wiki/*`。
 
-## 与原始项目的关系
+## 协议与原始项目关系
 
 本项目会在 HTTP API 能力允许的范围内，尽量对齐 [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki) 的使用体验。部分 UI 逻辑、视觉模式和 Logo 资源来自原 GPLv3 项目，并保留署名。
 
 原生专属能力会保持禁用，直到 LLM Wiki 暴露对应 HTTP 端点。例如：新建项目、资料导入/删除、Wiki 编辑、自动修复、Chat、Deep Research 编排等。
 
-署名见 [NOTICE](NOTICE)，许可见 [LICENSE](LICENSE)。
+LLM Wiki WebUI 跟随主项目协议，使用 GNU General Public License v3.0。署名见 [NOTICE](NOTICE)，许可见 [LICENSE](LICENSE)。
