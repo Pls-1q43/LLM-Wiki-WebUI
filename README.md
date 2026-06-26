@@ -33,7 +33,7 @@ http://127.0.0.1:19828/api/v1
 Then run this WebUI with one command:
 
 ```bash
-docker run -d --name llm-wiki-webui --restart unless-stopped -p 19829:19829 --add-host=host.docker.internal:host-gateway -e LLM_WIKI_API_BASE_URL=http://host.docker.internal:19828 -e LLM_WIKI_API_TOKEN=your-token-if-required ghcr.io/pls-1q43/llm-wiki-webui:latest
+docker run -d --name llm-wiki-webui --restart unless-stopped -p 19829:19829 --add-host=host.docker.internal:host-gateway -e WEBUI_ACCESS_TOKEN=change-this-webui-token -e LLM_WIKI_API_BASE_URL=http://host.docker.internal:19828 -e LLM_WIKI_API_TOKEN=your-native-api-token-if-required ghcr.io/pls-1q43/llm-wiki-webui:0.1.0
 ```
 
 Open:
@@ -44,12 +44,12 @@ http://localhost:19829
 
 ## Pasteable Compose
 
-Save this as `compose.yaml`, adjust the token if your native API requires auth, then run `docker compose up -d`.
+Save this as `compose.yaml`, change `WEBUI_ACCESS_TOKEN`, adjust `LLM_WIKI_API_TOKEN` only if your native API requires auth, then run `docker compose up -d`.
 
 ```yaml
 services:
   llm-wiki-webui:
-    image: ghcr.io/pls-1q43/llm-wiki-webui:latest
+    image: ghcr.io/pls-1q43/llm-wiki-webui:0.1.0
     container_name: llm-wiki-webui
     restart: unless-stopped
     ports:
@@ -58,9 +58,13 @@ services:
     environment:
       # Port used by the WebUI inside the container.
       PORT: "19829"
+      # Required. This protects the browser WebUI and proxy when exposed to LAN, ZeroTier, or the internet.
+      WEBUI_ACCESS_TOKEN: "change-this-webui-token"
+      # Optional. Use "true" only for trusted local development.
+      WEBUI_AUTH_DISABLED: "false"
       # Native LLM Wiki API on the host machine.
       LLM_WIKI_API_BASE_URL: "http://host.docker.internal:19828"
-      # Optional. Set only when native LLM Wiki API auth is enabled.
+      # Optional. Server-side token forwarded only to the native LLM Wiki API.
       LLM_WIKI_API_TOKEN: ""
       # Optional upstream API timeout.
       LLM_WIKI_PROXY_TIMEOUT_MS: "30000"
@@ -88,8 +92,10 @@ extra_hosts:
 | --- | --- | --- |
 | `PORT` | `19829` | WebUI server port. |
 | `HOST` | `0.0.0.0` | WebUI bind address. |
-| `LLM_WIKI_API_BASE_URL` | `http://127.0.0.1:19828` | Native LLM Wiki API base URL. |
-| `LLM_WIKI_API_TOKEN` | unset | Optional bearer token forwarded to the native API. |
+| `WEBUI_ACCESS_TOKEN` | unset | Required by default. Protects WebUI pages and `/api/llm-wiki/*`. |
+| `WEBUI_AUTH_DISABLED` | `false` | Set to `true` only for trusted local development without WebUI auth. |
+| `LLM_WIKI_API_BASE_URL` | `http://host.docker.internal:19828` | Native LLM Wiki API base URL. |
+| `LLM_WIKI_API_TOKEN` | unset | Optional bearer token forwarded server-side to the native API; it is never exposed to the browser. |
 | `LLM_WIKI_PROXY_TIMEOUT_MS` | `30000` | Proxy timeout for upstream API requests. |
 
 Do not commit local tokens. Use `.env.local` for local development; it is ignored by Git.
@@ -105,7 +111,7 @@ Production parity:
 
 ```bash
 npm run build
-LLM_WIKI_API_BASE_URL=http://127.0.0.1:19828 PORT=19829 npm start
+WEBUI_ACCESS_TOKEN=change-this-webui-token LLM_WIKI_API_BASE_URL=http://127.0.0.1:19828 PORT=19829 npm start
 ```
 
 Useful scripts:
@@ -156,7 +162,7 @@ http://127.0.0.1:19828/api/v1
 然后用一行命令启动 WebUI：
 
 ```bash
-docker run -d --name llm-wiki-webui --restart unless-stopped -p 19829:19829 --add-host=host.docker.internal:host-gateway -e LLM_WIKI_API_BASE_URL=http://host.docker.internal:19828 -e LLM_WIKI_API_TOKEN=如果需要鉴权则填入你的-token ghcr.io/pls-1q43/llm-wiki-webui:latest
+docker run -d --name llm-wiki-webui --restart unless-stopped -p 19829:19829 --add-host=host.docker.internal:host-gateway -e WEBUI_ACCESS_TOKEN=请改成你的-webui-token -e LLM_WIKI_API_BASE_URL=http://host.docker.internal:19828 -e LLM_WIKI_API_TOKEN=如果原生API需要鉴权则填入你的-token ghcr.io/pls-1q43/llm-wiki-webui:0.1.0
 ```
 
 打开：
@@ -167,12 +173,12 @@ http://localhost:19829
 
 ## 可直接粘贴的 Compose
 
-保存为 `compose.yaml`，按需修改 Token，然后运行 `docker compose up -d`。
+保存为 `compose.yaml`，先修改 `WEBUI_ACCESS_TOKEN`；只有原生 API 需要鉴权时才填写 `LLM_WIKI_API_TOKEN`。然后运行 `docker compose up -d`。
 
 ```yaml
 services:
   llm-wiki-webui:
-    image: ghcr.io/pls-1q43/llm-wiki-webui:latest
+    image: ghcr.io/pls-1q43/llm-wiki-webui:0.1.0
     container_name: llm-wiki-webui
     restart: unless-stopped
     ports:
@@ -181,9 +187,13 @@ services:
     environment:
       # 容器内 WebUI 监听端口。
       PORT: "19829"
+      # 必填。暴露到局域网、ZeroTier 或公网时，用它保护 WebUI 与代理接口。
+      WEBUI_ACCESS_TOKEN: "请改成你的-webui-token"
+      # 可选。只有可信本地开发环境才建议设为 "true"。
+      WEBUI_AUTH_DISABLED: "false"
       # 宿主机上原生 LLM Wiki API 的地址。
       LLM_WIKI_API_BASE_URL: "http://host.docker.internal:19828"
-      # 可选。只有原生 LLM Wiki API 开启鉴权时才需要填写。
+      # 可选。只在服务端透传给原生 LLM Wiki API，不会暴露给浏览器。
       LLM_WIKI_API_TOKEN: ""
       # 可选。代理请求上游 API 的超时时间。
       LLM_WIKI_PROXY_TIMEOUT_MS: "30000"
@@ -211,8 +221,10 @@ extra_hosts:
 | --- | --- | --- |
 | `PORT` | `19829` | WebUI 服务端口。 |
 | `HOST` | `0.0.0.0` | WebUI 绑定地址。 |
-| `LLM_WIKI_API_BASE_URL` | `http://127.0.0.1:19828` | 原生 LLM Wiki API 基础地址。 |
-| `LLM_WIKI_API_TOKEN` | 未设置 | 可选 Bearer Token，会透传给原生 API。 |
+| `WEBUI_ACCESS_TOKEN` | 未设置 | 默认必填，用于保护 WebUI 页面与 `/api/llm-wiki/*`。 |
+| `WEBUI_AUTH_DISABLED` | `false` | 仅可信本地开发环境可设为 `true`，用于关闭 WebUI 鉴权。 |
+| `LLM_WIKI_API_BASE_URL` | `http://host.docker.internal:19828` | 原生 LLM Wiki API 基础地址。 |
+| `LLM_WIKI_API_TOKEN` | 未设置 | 可选 Bearer Token，仅服务端透传给原生 API，不会暴露给浏览器。 |
 | `LLM_WIKI_PROXY_TIMEOUT_MS` | `30000` | 代理请求超时时间。 |
 
 不要提交本地 Token。开发时可以放在 `.env.local`，该文件已被 Git 忽略。
@@ -228,7 +240,7 @@ npm run dev
 
 ```bash
 npm run build
-LLM_WIKI_API_BASE_URL=http://127.0.0.1:19828 PORT=19829 npm start
+WEBUI_ACCESS_TOKEN=请改成你的-webui-token LLM_WIKI_API_BASE_URL=http://127.0.0.1:19828 PORT=19829 npm start
 ```
 
 常用脚本：

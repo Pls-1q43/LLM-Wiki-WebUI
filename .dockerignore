@@ -3,6 +3,9 @@
 node_modules
 dist
 coverage
+.playwright-cli
+output
+test-results
 npm-debug.log*
 .DS_Store
 .env

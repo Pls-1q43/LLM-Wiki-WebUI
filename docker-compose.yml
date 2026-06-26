@@ -6,6 +6,10 @@ services:
     environment:
       PORT: "19829"
       HOST: "0.0.0.0"
+      # Required. Change this before exposing the WebUI to LAN, ZeroTier, or the internet.
+      WEBUI_ACCESS_TOKEN: "${WEBUI_ACCESS_TOKEN:?Set WEBUI_ACCESS_TOKEN before starting LLM Wiki WebUI}"
+      # Optional. Only for local development when you intentionally want no WebUI auth.
+      WEBUI_AUTH_DISABLED: "${WEBUI_AUTH_DISABLED:-false}"
       LLM_WIKI_API_BASE_URL: "http://host.docker.internal:19828"
       LLM_WIKI_API_TOKEN: "${LLM_WIKI_API_TOKEN:-}"
       LLM_WIKI_PROXY_TIMEOUT_MS: "30000"
