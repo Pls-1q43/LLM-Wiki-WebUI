@@ -1,0 +1,207 @@
+{
+  "app": {
+    "title": "LLM Wiki WebUI",
+    "language": "Language",
+    "english": "English",
+    "chinese": "中文"
+  },
+  "nav": {
+    "primary": "Primary navigation",
+    "skipToContent": "Skip to content",
+    "chat": "Chat",
+    "wiki": "Wiki",
+    "sources": "Sources",
+    "search": "Search",
+    "graph": "Graph",
+    "lint": "Lint",
+    "review": "Review",
+    "settings": "Settings"
+  },
+  "common": {
+    "all": "All",
+    "auth": "Auth",
+    "current": "current",
+    "dir": "dir",
+    "loading": "Loading...",
+    "none": "none",
+    "project": "Project",
+    "required": "required",
+    "resolved": "resolved",
+    "unresolved": "unresolved",
+    "unknown": "unknown"
+  },
+  "status": {
+    "nativeApiReachable": "Native API reachable",
+    "nativeApiUnavailable": "Native API unavailable",
+    "openOrUnknown": "open or unknown",
+    "readOnlyApi": "Read-only API"
+  },
+  "workspace": {
+    "nativeApiProject": "Native API project",
+    "refreshFromNativeApi": "Refresh from native API",
+    "fileRoots": "File roots",
+    "noFiles": "No files exposed by the native API yet.",
+    "unableToLoad": "Unable to load {{path}}\n\n{{error}}",
+    "currentProjectPrefix": "● "
+  },
+  "wiki": {
+    "reader": "Wiki Reader",
+    "selectPage": "Select a wiki page",
+    "noPageSelected": "No page selected",
+    "choosePage": "Choose a page from the exposed wiki tree."
+  },
+  "sources": {
+    "title": "Raw Sources",
+    "browse": "Browse exposed source files",
+    "refreshFolder": "Refresh folder",
+    "readOnlyNotice": "Import and delete are disabled because the native HTTP API only exposes source listing, text reads, and rescan."
+  },
+  "search": {
+    "title": "Search",
+    "eyebrow": "Shared backend retrieval",
+    "heading": "Search wiki pages",
+    "placeholder": "Search wiki pages...",
+    "score": "score {{score}}"
+  },
+  "graph": {
+    "title": "Knowledge Graph",
+    "summary": "{{nodes}} nodes · {{edges}} edges",
+    "aria": "Knowledge graph",
+    "visible": "Visible nodes",
+    "links": "Links",
+    "openProject": "Open a project to view the graph",
+    "buildingGraph": "Building graph...",
+    "retry": "Retry",
+    "noPages": "No pages yet",
+    "importSourcesHint": "Import sources to start building the knowledge graph",
+    "knowledgeGraph": "Knowledge Graph",
+    "hidden": "hidden",
+    "pages": "pages",
+    "searchLabel": "Search graph",
+    "searchPlaceholder": "Search nodes...",
+    "clearSearch": "Clear graph search",
+    "closeSearch": "Close graph search",
+    "noSearchResults": "No matching nodes",
+    "noVisibleNodes": "No visible nodes",
+    "filter": "Filter",
+    "reset": "Reset",
+    "type": "Type",
+    "community": "Community",
+    "insights": "Insights",
+    "graphFilters": "Graph Filters",
+    "quickFilters": "Quick filters",
+    "hideIndexOverview": "Hide index / overview / log",
+    "hideIsolated": "Hide isolated nodes",
+    "maxLinks": "Max links",
+    "maxLinksHint": "Hide nodes above this link count",
+    "displayTuning": "Display tuning",
+    "nodeSize": "Node size",
+    "spacing": "Spacing",
+    "nodeTypes": "Node types",
+    "hiddenNodes": "Hidden nodes",
+    "show": "Show",
+    "showingStats": "Showing {{pages}} of {{total}} pages and {{links}} of {{totalLinks}} links.",
+    "hideThisNode": "Hide this node",
+    "nodeTypesLabel": "Node Types",
+    "communitiesLabel": "Communities",
+    "cluster": "Cluster {{id}}",
+    "surprisingConnections": "Surprising Connections",
+    "knowledgeGaps": "Knowledge Gaps",
+    "openPage": "Open page",
+    "doubleClickToggle": "Double-click to toggle visibility",
+    "nodeTypeLabels": {
+      "entity": "Entity",
+      "concept": "Concept",
+      "source": "Source",
+      "query": "Query",
+      "synthesis": "Synthesis",
+      "overview": "Overview",
+      "comparison": "Comparison",
+      "finding": "Finding",
+      "thesis": "Thesis",
+      "methodology": "Methodology",
+      "other": "Other"
+    }
+  },
+  "review": {
+    "title": "Review",
+    "summary": "{{count}} items from native review state",
+    "unresolved": "Unresolved",
+    "resolved": "Resolved",
+    "all": "All"
+  },
+  "lint": {
+    "title": "Wiki Lint",
+    "heading": "Run lint to check wiki health",
+    "run": "Run Lint",
+    "autoFixDisabled": "Fix and Open & Edit are disabled because the API does not expose write operations.",
+    "severity": {
+      "info": "Info",
+      "warning": "Warning"
+    },
+    "issues": {
+      "missingIndex": {
+        "title": "Missing index",
+        "detail": "The exposed wiki tree does not include wiki/index.md."
+      },
+      "emptyPage": {
+        "title": "Empty page",
+        "detail": "This page is empty or could not be loaded through the API."
+      },
+      "missingH1": {
+        "title": "Missing H1",
+        "detail": "This page has no Markdown H1 heading."
+      },
+      "danglingWikilink": {
+        "title": "Possible dangling wikilink",
+        "detail": "[[{{link}}]] does not match a currently exposed Markdown filename."
+      }
+    }
+  },
+  "unsupported": {
+    "surface": "Native-only surface",
+    "waiting": "Waiting for API",
+    "chatTitle": "Chat and generation",
+    "chat": {
+      "name": "Chat",
+      "reason": "The native local API exposes POST /projects/{id}/chat, but the current upstream implementation returns 501."
+    },
+    "projectCreation": {
+      "name": "Project creation",
+      "reason": "Creating projects currently depends on native Tauri dialog and filesystem commands that are not exposed through the HTTP API."
+    },
+    "sourceImportDelete": {
+      "name": "Source import/delete",
+      "reason": "The API can list sources and trigger a rescan, but import/delete operations are native-only today."
+    },
+    "wikiEditing": {
+      "name": "Wiki editing and auto-fix",
+      "reason": "The HTTP API intentionally exposes read-only file content; write endpoints are not available."
+    },
+    "deepResearch": {
+      "name": "Deep Research",
+      "reason": "Deep Research orchestration lives in the original WebView and has no non-invasive HTTP endpoint yet."
+    }
+  },
+  "settings": {
+    "runtimeApi": "Runtime API",
+    "proxyStatus": "Docker WebUI proxy status",
+    "apiStatus": "API status",
+    "apiEnabled": "API enabled",
+    "authRequired": "Auth required",
+    "tokenSource": "Token source",
+    "proxyEnvBrowser": "proxy/env/browser",
+    "currentProject": "Current project",
+    "projectPath": "Project path"
+  },
+  "diagnostics": {
+    "title": "Diagnostics",
+    "nativeBridge": "Native bridge",
+    "nativeApi": "Native API",
+    "wikiFiles": "Wiki files",
+    "sourceFiles": "Source files",
+    "graphNodes": "Graph nodes",
+    "reviewItems": "Review items",
+    "notice": "This WebUI is intentionally non-invasive. All project data comes through the native LLM Wiki HTTP API or the Docker proxy."
+  }
+}

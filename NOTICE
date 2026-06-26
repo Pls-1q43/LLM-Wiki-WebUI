@@ -1,0 +1,15 @@
+LLM Wiki WebUI
+
+This project is a separate, non-invasive WebUI for a running native LLM Wiki
+desktop application. It communicates with LLM Wiki through the local HTTP API
+and does not modify the upstream application.
+
+This project adapts API contract ideas, workbench interaction patterns,
+Logo assets, and GPLv3-compatible implementation concepts from:
+
+  LLM Wiki
+  Copyright (C) 2024-2026 Yong Su
+  https://github.com/nashsu/llm_wiki
+
+The copied/adapted portions remain licensed under the GNU General Public
+License version 3. See LICENSE.

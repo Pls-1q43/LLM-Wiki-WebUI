@@ -6,6 +6,9 @@ dist/
 !.env.example
 .codegraph/
 coverage/
+.playwright-cli/
+output/playwright/
+test-results/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

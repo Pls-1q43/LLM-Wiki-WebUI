@@ -1,0 +1,9 @@
+.git
+.codegraph
+node_modules
+dist
+coverage
+npm-debug.log*
+.DS_Store
+.env
+.env.*

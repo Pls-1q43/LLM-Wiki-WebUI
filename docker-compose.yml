@@ -1,0 +1,13 @@
+services:
+  webui:
+    build: .
+    ports:
+      - "19829:19829"
+    environment:
+      PORT: "19829"
+      HOST: "0.0.0.0"
+      LLM_WIKI_API_BASE_URL: "http://host.docker.internal:19828"
+      LLM_WIKI_API_TOKEN: "${LLM_WIKI_API_TOKEN:-}"
+      LLM_WIKI_PROXY_TIMEOUT_MS: "30000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

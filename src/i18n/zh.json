@@ -1,0 +1,207 @@
+{
+  "app": {
+    "title": "LLM Wiki WebUI",
+    "language": "界面语言",
+    "english": "English",
+    "chinese": "中文"
+  },
+  "nav": {
+    "primary": "主导航",
+    "skipToContent": "跳到内容区",
+    "chat": "对话",
+    "wiki": "Wiki",
+    "sources": "原始资料",
+    "search": "搜索",
+    "graph": "关系图",
+    "lint": "检查",
+    "review": "待审阅",
+    "settings": "设置"
+  },
+  "common": {
+    "all": "全部",
+    "auth": "鉴权",
+    "current": "current",
+    "dir": "目录",
+    "loading": "加载中...",
+    "none": "无",
+    "project": "项目",
+    "required": "需要鉴权",
+    "resolved": "已解决",
+    "unresolved": "未解决",
+    "unknown": "未知"
+  },
+  "status": {
+    "nativeApiReachable": "原生 API 可访问",
+    "nativeApiUnavailable": "原生 API 不可访问",
+    "openOrUnknown": "开放或未知",
+    "readOnlyApi": "只读 API"
+  },
+  "workspace": {
+    "nativeApiProject": "原生 API 项目",
+    "refreshFromNativeApi": "从原生 API 刷新",
+    "fileRoots": "文件根目录",
+    "noFiles": "原生 API 暂未暴露文件。",
+    "unableToLoad": "无法加载 {{path}}\n\n{{error}}",
+    "currentProjectPrefix": "● "
+  },
+  "wiki": {
+    "reader": "Wiki 阅读器",
+    "selectPage": "选择一个 Wiki 页面",
+    "noPageSelected": "未选择页面",
+    "choosePage": "从左侧 Wiki 树选择一个页面。"
+  },
+  "sources": {
+    "title": "原始资料",
+    "browse": "浏览已暴露的原始资料",
+    "refreshFolder": "刷新文件夹",
+    "readOnlyNotice": "导入和删除已禁用，因为原生 HTTP API 目前只暴露资料列表、文本读取和重新扫描。"
+  },
+  "search": {
+    "title": "搜索",
+    "eyebrow": "共享后端检索",
+    "heading": "搜索 Wiki 页面",
+    "placeholder": "搜索 Wiki 页面...",
+    "score": "得分 {{score}}"
+  },
+  "graph": {
+    "title": "知识图谱",
+    "summary": "{{nodes}} 个节点 · {{edges}} 条边",
+    "aria": "知识图谱",
+    "visible": "可见节点",
+    "links": "链接",
+    "openProject": "打开项目以查看关系图",
+    "buildingGraph": "正在构建关系图...",
+    "retry": "重试",
+    "noPages": "暂无页面",
+    "importSourcesHint": "导入资料以开始构建知识图谱",
+    "knowledgeGraph": "知识关系图",
+    "hidden": "已隐藏",
+    "pages": "页面",
+    "searchLabel": "搜索关系图",
+    "searchPlaceholder": "搜索节点...",
+    "clearSearch": "清除关系图搜索",
+    "closeSearch": "关闭关系图搜索",
+    "noSearchResults": "没有匹配的节点",
+    "noVisibleNodes": "没有可见节点",
+    "filter": "过滤器",
+    "reset": "重置",
+    "type": "类型",
+    "community": "社区",
+    "insights": "洞察",
+    "graphFilters": "关系图过滤器",
+    "quickFilters": "快速过滤",
+    "hideIndexOverview": "隐藏索引/概述/日志",
+    "hideIsolated": "隐藏孤立节点",
+    "maxLinks": "最大链接数",
+    "maxLinksHint": "隐藏链接数超过此值的节点",
+    "displayTuning": "显示调节",
+    "nodeSize": "节点大小",
+    "spacing": "间距",
+    "nodeTypes": "节点类型",
+    "hiddenNodes": "已隐藏节点",
+    "show": "显示",
+    "showingStats": "显示 {{pages}}/{{total}} 个页面和 {{links}}/{{totalLinks}} 条链接。",
+    "hideThisNode": "隐藏此节点",
+    "nodeTypesLabel": "节点类型",
+    "communitiesLabel": "社区",
+    "cluster": "簇 {{id}}",
+    "surprisingConnections": "意外连接",
+    "knowledgeGaps": "知识缺口",
+    "openPage": "打开页面",
+    "doubleClickToggle": "双击切换显示/隐藏",
+    "nodeTypeLabels": {
+      "entity": "实体",
+      "concept": "概念",
+      "source": "来源",
+      "query": "查询",
+      "synthesis": "综合",
+      "overview": "概述",
+      "comparison": "比较",
+      "finding": "发现",
+      "thesis": "论点",
+      "methodology": "方法论",
+      "other": "其他"
+    }
+  },
+  "review": {
+    "title": "待审阅",
+    "summary": "来自原生审阅状态的 {{count}} 个项目",
+    "unresolved": "未解决",
+    "resolved": "已解决",
+    "all": "全部"
+  },
+  "lint": {
+    "title": "Wiki 检查",
+    "heading": "运行检查以诊断 Wiki 健康状况",
+    "run": "开始检查",
+    "autoFixDisabled": "修复和打开编辑已禁用，因为 API 不暴露写入操作。",
+    "severity": {
+      "info": "提示",
+      "warning": "警告"
+    },
+    "issues": {
+      "missingIndex": {
+        "title": "缺少 index",
+        "detail": "已暴露的 Wiki 文件树不包含 wiki/index.md。"
+      },
+      "emptyPage": {
+        "title": "空页面",
+        "detail": "此页面为空，或无法通过 API 加载。"
+      },
+      "missingH1": {
+        "title": "缺少 H1",
+        "detail": "此页面没有 Markdown H1 标题。"
+      },
+      "danglingWikilink": {
+        "title": "疑似失效 Wiki 链接",
+        "detail": "[[{{link}}]] 未匹配到当前已暴露的 Markdown 文件名。"
+      }
+    }
+  },
+  "unsupported": {
+    "surface": "原生专属功能",
+    "waiting": "等待 API 支持",
+    "chatTitle": "对话与生成",
+    "chat": {
+      "name": "对话",
+      "reason": "原生本地 API 暴露了 POST /projects/{id}/chat，但当前上游实现返回 501。"
+    },
+    "projectCreation": {
+      "name": "新建项目",
+      "reason": "新建项目目前依赖原生 Tauri 对话框和文件系统命令，尚未通过 HTTP API 暴露。"
+    },
+    "sourceImportDelete": {
+      "name": "资料导入/删除",
+      "reason": "API 可以列出资料并触发重新扫描，但导入/删除目前仍是原生专属操作。"
+    },
+    "wikiEditing": {
+      "name": "Wiki 编辑与自动修复",
+      "reason": "HTTP API 目前只暴露只读文件内容；没有写入端点。"
+    },
+    "deepResearch": {
+      "name": "深度研究",
+      "reason": "深度研究编排仍在原始 WebView 中，尚无非侵入式 HTTP 端点。"
+    }
+  },
+  "settings": {
+    "runtimeApi": "运行时 API",
+    "proxyStatus": "Docker WebUI 代理状态",
+    "apiStatus": "API 状态",
+    "apiEnabled": "API 已启用",
+    "authRequired": "需要鉴权",
+    "tokenSource": "Token 来源",
+    "proxyEnvBrowser": "代理/env/浏览器",
+    "currentProject": "当前项目",
+    "projectPath": "项目路径"
+  },
+  "diagnostics": {
+    "title": "诊断",
+    "nativeBridge": "原生桥接",
+    "nativeApi": "原生 API",
+    "wikiFiles": "Wiki 文件",
+    "sourceFiles": "原始资料文件",
+    "graphNodes": "图谱节点",
+    "reviewItems": "待审阅项目",
+    "notice": "这个 WebUI 是非侵入式的。所有项目数据都来自原生 LLM Wiki HTTP API 或 Docker 代理。"
+  }
+}
