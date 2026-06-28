@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -18,12 +18,15 @@ import {
   GitBranch,
   Layers,
   Loader2,
+  Menu,
   MessageSquare,
+  MoreHorizontal,
   RefreshCw,
   Search,
   Server,
   Settings,
   Tag,
+  X,
 } from "lucide-react";
 import {
   ApiFileNode,
@@ -62,6 +65,9 @@ const navItems: Array<{ id: View; labelKey: string; icon: typeof BookOpen }> = [
   { id: "chat", labelKey: "nav.chat", icon: MessageSquare },
   { id: "settings", labelKey: "nav.settings", icon: Settings },
 ];
+
+const mobilePrimaryNav: View[] = ["wiki", "search", "graph", "review", "settings"];
+const mobileSecondaryNav: View[] = ["sources", "lint", "chat"];
 
 const client = new LlmWikiApiClient();
 
@@ -135,6 +141,22 @@ function formatBytes(value?: number) {
 function fileNameFromPath(path: string | null) {
   if (!path) return "";
   return path.split("/").filter(Boolean).pop() ?? path;
+}
+
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() =>
+    typeof window === "undefined" ? false : window.matchMedia(query).matches,
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [query]);
+
+  return matches;
 }
 
 function collectTextPaths(nodes: ApiFileNode[], limit = 30) {
@@ -280,6 +302,11 @@ export function App() {
   const [loading, setLoading] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [rescanMessage, setRescanMessage] = useState<string | null>(null);
+  const isMobile = useMediaQuery("(max-width: 860px)");
+  const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
+  const [isMobileMoreOpen, setIsMobileMoreOpen] = useState(false);
+  const workspaceTriggerRef = useRef<HTMLButtonElement>(null);
+  const workspaceCloseRef = useRef<HTMLButtonElement>(null);
 
   const selectedProject = useMemo(
     () =>
@@ -494,9 +521,38 @@ export function App() {
     (path: string, view: View = "wiki") => {
       setSelectedFile(path);
       setActiveView(view);
+      setIsWorkspaceOpen(false);
     },
     [],
   );
+
+  const activateView = useCallback(
+    (view: View) => {
+      setActiveView(view);
+      setIsWorkspaceOpen(false);
+      setIsMobileMoreOpen(false);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!isMobile) {
+      setIsWorkspaceOpen(false);
+      setIsMobileMoreOpen(false);
+    }
+  }, [isMobile]);
+
+  useEffect(() => {
+    if (!isWorkspaceOpen) return;
+    workspaceCloseRef.current?.focus();
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setIsWorkspaceOpen(false);
+      workspaceTriggerRef.current?.focus();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isWorkspaceOpen]);
 
   useEffect(() => {
     const pageTitle = (() => {
@@ -517,6 +573,14 @@ export function App() {
     })();
     document.title = `${pageTitle} | ${APP_DISPLAY_NAME}`;
   }, [activeView, searchQuery, selectedFile, t]);
+
+  const activeViewLabel = t(navItems.find((navItem) => navItem.id === activeView)?.labelKey ?? "app.title");
+  const mobileTitle =
+    (activeView === "wiki" || activeView === "sources") && selectedFile
+      ? fileNameFromPath(selectedFile)
+      : activeView === "search" && searchQuery.trim()
+        ? searchQuery.trim()
+        : activeViewLabel;
 
   return (
     <main className="app-shell">
@@ -553,66 +617,31 @@ export function App() {
         <StatusDot health={health} />
       </aside>
 
-      <section className="workspace-panel">
-        <header className="panel-header">
-          <div>
-            <p className="eyebrow">{t("common.project")}</p>
-            <h1>{selectedProject?.name ?? t("app.title")}</h1>
-          </div>
-          <button
-            className="icon-action"
-            type="button"
-            title={t("workspace.refreshFromNativeApi")}
-            onClick={() => selectedProject && loadProjectData(selectedProject.id)}
-          >
-            <RefreshCw size={17} />
-          </button>
-        </header>
+      <WorkspacePanel
+        activeTree={activeTree}
+        activeView={activeView}
+        idPrefix="desktop"
+        makeHref={makeHref}
+        onOpen={openPath}
+        onProjectChange={setSelectedProjectId}
+        onRefresh={() => selectedProject && loadProjectData(selectedProject.id)}
+        onViewChange={activateView}
+        projects={projects}
+        selectedFile={selectedFile}
+        selectedProject={selectedProject}
+        selectedProjectId={selectedProjectId}
+      />
 
-        <select
-          id="project-select"
-          className="select-input"
-          value={selectedProject?.id ?? selectedProjectId}
-          onChange={(event) => setSelectedProjectId(event.target.value)}
-        >
-          {projects.length === 0 && <option value="current">{t("common.current")}</option>}
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.current ? t("workspace.currentProjectPrefix") : ""}
-              {project.name}
-            </option>
-          ))}
-        </select>
-
-        <div className="tree-tabs" role="tablist" aria-label={t("workspace.fileRoots")}>
-          <a
-            className={activeView !== "sources" ? "active" : ""}
-            href={makeHref({ view: "wiki", path: selectedFile })}
-            onClick={(event) => {
-              if (!shouldHandleInApp(event)) return;
-              event.preventDefault();
-              setActiveView("wiki");
-            }}
-          >
-            {t("nav.wiki")}
-          </a>
-          <a
-            className={activeView === "sources" ? "active" : ""}
-            href={makeHref({ view: "sources", path: selectedFile })}
-            onClick={(event) => {
-              if (!shouldHandleInApp(event)) return;
-              event.preventDefault();
-              setActiveView("sources");
-            }}
-          >
-            {t("nav.sources")}
-          </a>
-        </div>
-
-        <div className="tree-list">
-          <FileTree nodes={activeTree} selectedPath={selectedFile} makeHref={makeHref} onOpen={openPath} />
-        </div>
-      </section>
+      <MobileTopBar
+        activeViewLabel={activeViewLabel}
+        health={health}
+        isMoreOpen={isMobileMoreOpen}
+        onOpenFiles={() => setIsWorkspaceOpen(true)}
+        onRefresh={() => selectedProject && loadProjectData(selectedProject.id)}
+        onToggleMore={() => setIsMobileMoreOpen((value) => !value)}
+        title={mobileTitle}
+        triggerRef={workspaceTriggerRef}
+      />
 
       <section id="main-content" className="reader-surface" tabIndex={-1}>
         {loading && (
@@ -697,6 +726,35 @@ export function App() {
           />
         )}
       </section>
+
+      <MobileWorkspaceDrawer
+        activeTree={activeTree}
+        activeView={activeView}
+        closeRef={workspaceCloseRef}
+        idPrefix="mobile"
+        isOpen={isWorkspaceOpen}
+        makeHref={makeHref}
+        onClose={() => {
+          setIsWorkspaceOpen(false);
+          workspaceTriggerRef.current?.focus();
+        }}
+        onOpen={openPath}
+        onProjectChange={setSelectedProjectId}
+        onRefresh={() => selectedProject && loadProjectData(selectedProject.id)}
+        onViewChange={activateView}
+        projects={projects}
+        selectedFile={selectedFile}
+        selectedProject={selectedProject}
+        selectedProjectId={selectedProjectId}
+      />
+
+      <MobileBottomNav
+        activeView={activeView}
+        isMoreOpen={isMobileMoreOpen}
+        makeHref={makeHref}
+        onViewChange={activateView}
+        selectedFile={selectedFile}
+      />
     </main>
   );
 }
@@ -711,6 +769,289 @@ function StatusDot({ health }: { health: ApiHealth | null }) {
     >
       <span className={ok ? "status-dot ok" : "status-dot bad"} />
     </div>
+  );
+}
+
+function WorkspacePanel({
+  activeTree,
+  activeView,
+  idPrefix,
+  makeHref,
+  onOpen,
+  onProjectChange,
+  onRefresh,
+  onViewChange,
+  projects,
+  selectedFile,
+  selectedProject,
+  selectedProjectId,
+}: {
+  activeTree: ApiFileNode[];
+  activeView: View;
+  idPrefix: string;
+  makeHref: (params: AppUrlParams) => string;
+  onOpen: (path: string, view?: View) => void;
+  onProjectChange: (id: string) => void;
+  onRefresh: () => void;
+  onViewChange: (view: View) => void;
+  projects: ApiProject[];
+  selectedFile: string | null;
+  selectedProject?: ApiProject;
+  selectedProjectId: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <section className="workspace-panel">
+      <header className="panel-header">
+        <div>
+          <p className="eyebrow">{t("common.project")}</p>
+          <h1>{selectedProject?.name ?? t("app.title")}</h1>
+        </div>
+        <button
+          className="icon-action"
+          type="button"
+          title={t("workspace.refreshFromNativeApi")}
+          onClick={onRefresh}
+        >
+          <RefreshCw size={17} />
+        </button>
+      </header>
+
+      <label className="sr-only" htmlFor={`${idPrefix}-project-select`}>
+        {t("common.project")}
+      </label>
+      <select
+        id={`${idPrefix}-project-select`}
+        className="select-input"
+        value={selectedProject?.id ?? selectedProjectId}
+        onChange={(event) => onProjectChange(event.target.value)}
+      >
+        {projects.length === 0 && <option value="current">{t("common.current")}</option>}
+        {projects.map((project) => (
+          <option key={project.id} value={project.id}>
+            {project.current ? t("workspace.currentProjectPrefix") : ""}
+            {project.name}
+          </option>
+        ))}
+      </select>
+
+      <div className="tree-tabs" role="tablist" aria-label={t("workspace.fileRoots")}>
+        <a
+          className={activeView !== "sources" ? "active" : ""}
+          href={makeHref({ view: "wiki", path: selectedFile })}
+          onClick={(event) => {
+            if (!shouldHandleInApp(event)) return;
+            event.preventDefault();
+            onViewChange("wiki");
+          }}
+        >
+          {t("nav.wiki")}
+        </a>
+        <a
+          className={activeView === "sources" ? "active" : ""}
+          href={makeHref({ view: "sources", path: selectedFile })}
+          onClick={(event) => {
+            if (!shouldHandleInApp(event)) return;
+            event.preventDefault();
+            onViewChange("sources");
+          }}
+        >
+          {t("nav.sources")}
+        </a>
+      </div>
+
+      <div className="tree-list">
+        <FileTree nodes={activeTree} selectedPath={selectedFile} makeHref={makeHref} onOpen={onOpen} />
+      </div>
+    </section>
+  );
+}
+
+function MobileTopBar({
+  activeViewLabel,
+  health,
+  isMoreOpen,
+  onOpenFiles,
+  onRefresh,
+  onToggleMore,
+  title,
+  triggerRef,
+}: {
+  activeViewLabel: string;
+  health: ApiHealth | null;
+  isMoreOpen: boolean;
+  onOpenFiles: () => void;
+  onRefresh: () => void;
+  onToggleMore: () => void;
+  title: string;
+  triggerRef: RefObject<HTMLButtonElement | null>;
+}) {
+  const { t } = useTranslation();
+  return (
+    <header className="mobile-topbar">
+      <button
+        ref={triggerRef}
+        className="mobile-icon-button"
+        type="button"
+        aria-label={t("mobile.openFiles")}
+        onClick={onOpenFiles}
+      >
+        <Menu size={19} />
+      </button>
+      <div className="mobile-title-stack">
+        <span>{activeViewLabel}</span>
+        <strong>{title}</strong>
+      </div>
+      <StatusDot health={health} />
+      <button
+        className="mobile-icon-button"
+        type="button"
+        aria-label={t("workspace.refreshFromNativeApi")}
+        onClick={onRefresh}
+      >
+        <RefreshCw size={18} />
+      </button>
+      <button
+        className={isMoreOpen ? "mobile-icon-button active" : "mobile-icon-button"}
+        type="button"
+        aria-expanded={isMoreOpen}
+        aria-label={t("mobile.more")}
+        onClick={onToggleMore}
+      >
+        <MoreHorizontal size={19} />
+      </button>
+    </header>
+  );
+}
+
+function MobileWorkspaceDrawer({
+  activeTree,
+  activeView,
+  closeRef,
+  idPrefix,
+  isOpen,
+  makeHref,
+  onClose,
+  onOpen,
+  onProjectChange,
+  onRefresh,
+  onViewChange,
+  projects,
+  selectedFile,
+  selectedProject,
+  selectedProjectId,
+}: {
+  activeTree: ApiFileNode[];
+  activeView: View;
+  closeRef: RefObject<HTMLButtonElement | null>;
+  idPrefix: string;
+  isOpen: boolean;
+  makeHref: (params: AppUrlParams) => string;
+  onClose: () => void;
+  onOpen: (path: string, view?: View) => void;
+  onProjectChange: (id: string) => void;
+  onRefresh: () => void;
+  onViewChange: (view: View) => void;
+  projects: ApiProject[];
+  selectedFile: string | null;
+  selectedProject?: ApiProject;
+  selectedProjectId: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className={isOpen ? "mobile-workspace-layer open" : "mobile-workspace-layer"} aria-hidden={!isOpen}>
+      <button className="mobile-scrim" type="button" aria-label={t("mobile.closeFiles")} onClick={onClose} />
+      <aside className="mobile-workspace-drawer" role="dialog" aria-modal="true" aria-label={t("mobile.filesAndProjects")}>
+        <header className="mobile-drawer-header">
+          <div>
+            <p className="eyebrow">{t("mobile.filesAndProjects")}</p>
+            <h2>{selectedProject?.name ?? t("app.title")}</h2>
+          </div>
+          <button ref={closeRef} className="icon-action" type="button" aria-label={t("mobile.closeFiles")} onClick={onClose}>
+            <X size={18} />
+          </button>
+        </header>
+        <WorkspacePanel
+          activeTree={activeTree}
+          activeView={activeView}
+          idPrefix={idPrefix}
+          makeHref={makeHref}
+          onOpen={onOpen}
+          onProjectChange={onProjectChange}
+          onRefresh={onRefresh}
+          onViewChange={onViewChange}
+          projects={projects}
+          selectedFile={selectedFile}
+          selectedProject={selectedProject}
+          selectedProjectId={selectedProjectId}
+        />
+      </aside>
+    </div>
+  );
+}
+
+function MobileBottomNav({
+  activeView,
+  isMoreOpen,
+  makeHref,
+  onViewChange,
+  selectedFile,
+}: {
+  activeView: View;
+  isMoreOpen: boolean;
+  makeHref: (params: AppUrlParams) => string;
+  onViewChange: (view: View) => void;
+  selectedFile: string | null;
+}) {
+  const { t } = useTranslation();
+  const primaryItems = navItems.filter((item) => mobilePrimaryNav.includes(item.id));
+  const secondaryItems = navItems.filter((item) => mobileSecondaryNav.includes(item.id));
+  return (
+    <>
+      <nav className="mobile-bottom-nav" aria-label={t("nav.primary")}>
+        {primaryItems.map((item) => {
+          const Icon = item.icon;
+          const label = t(item.labelKey);
+          return (
+            <a
+              className={activeView === item.id ? "mobile-tab active" : "mobile-tab"}
+              key={item.id}
+              href={makeHref({ view: item.id, path: selectedFile })}
+              aria-current={activeView === item.id ? "page" : undefined}
+              onClick={(event) => {
+                if (!shouldHandleInApp(event)) return;
+                event.preventDefault();
+                onViewChange(item.id);
+              }}
+            >
+              <Icon size={19} />
+              <span>{label}</span>
+            </a>
+          );
+        })}
+      </nav>
+      <div className={isMoreOpen ? "mobile-more-menu open" : "mobile-more-menu"}>
+        {secondaryItems.map((item) => {
+          const Icon = item.icon;
+          const label = t(item.labelKey);
+          return (
+            <a
+              className={activeView === item.id ? "active" : ""}
+              key={item.id}
+              href={makeHref({ view: item.id, path: selectedFile })}
+              onClick={(event) => {
+                if (!shouldHandleInApp(event)) return;
+                event.preventDefault();
+                onViewChange(item.id);
+              }}
+            >
+              <Icon size={18} />
+              {label}
+            </a>
+          );
+        })}
+      </div>
+    </>
   );
 }
 
@@ -889,7 +1230,7 @@ function WikiView({
 
   return (
     <article className="view-stack">
-      <header className="reader-header">
+      <header className="reader-header wiki-reader-header">
         <div>
           <p className="eyebrow">{t("wiki.reader")}</p>
           <h2>{selectedFile ?? t("wiki.selectPage")}</h2>
@@ -998,6 +1339,8 @@ function FrontmatterSummary({
     if (FRONTMATTER_PRIMARY_KEYS.has(key)) return false;
     return Array.isArray(value) ? value.length > 0 : value.trim().length > 0;
   });
+  const isMobile = useMediaQuery("(max-width: 860px)");
+  const { t } = useTranslation();
 
   if (!title && !type && !created && tags.length === 0 && sourceItems.length === 0 && relatedItems.length === 0 && extras.length === 0) {
     return null;
@@ -1041,80 +1384,90 @@ function FrontmatterSummary({
       {description && <p className="frontmatter-description">{description}</p>}
       {origin && <div className="frontmatter-origin">{origin}</div>}
 
-      {sourceItems.length > 0 && (
-        <div className="frontmatter-section">
-          <div className="frontmatter-section-title">
-            <Layers size={15} />
-            Sources <span>({sourceItems.length})</span>
-          </div>
-          <div className="frontmatter-card-row">
-            {sourceItems.map((source) => {
-              const { slug, label } = unwrapWikiValue(source);
-              const path = resolveSourceTarget(slug, sources);
-              return (
-                <a
-                  className={path ? "frontmatter-source-card" : "frontmatter-source-card unresolved"}
-                  href={path ? makeHref({ view: "sources", path }) : undefined}
-                  key={source}
-                  aria-disabled={!path}
-                  title={path ? label : `Source not exposed by API: ${label}`}
-                  onClick={(event) => {
-                    if (!path || !shouldHandleInApp(event)) return;
-                    event.preventDefault();
-                    onOpenSource(path);
-                  }}
-                >
-                  <FileText size={16} />
-                  <span>{label}</span>
-                </a>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {(sourceItems.length > 0 || relatedItems.length > 0 || extras.length > 0) && (
+        <details className="frontmatter-details" open={!isMobile}>
+          <summary>
+            <span>{t("meta.details")}</span>
+            <ChevronDown size={15} />
+          </summary>
+          <div className="frontmatter-details-body">
+            {sourceItems.length > 0 && (
+              <div className="frontmatter-section">
+                <div className="frontmatter-section-title">
+                  <Layers size={15} />
+                  {t("meta.sources")} <span>({sourceItems.length})</span>
+                </div>
+                <div className="frontmatter-card-row">
+                  {sourceItems.map((source) => {
+                    const { slug, label } = unwrapWikiValue(source);
+                    const path = resolveSourceTarget(slug, sources);
+                    return (
+                      <a
+                        className={path ? "frontmatter-source-card" : "frontmatter-source-card unresolved"}
+                        href={path ? makeHref({ view: "sources", path }) : undefined}
+                        key={source}
+                        aria-disabled={!path}
+                        title={path ? label : t("meta.sourceNotExposed", { label })}
+                        onClick={(event) => {
+                          if (!path || !shouldHandleInApp(event)) return;
+                          event.preventDefault();
+                          onOpenSource(path);
+                        }}
+                      >
+                        <FileText size={16} />
+                        <span>{label}</span>
+                      </a>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
-      {relatedItems.length > 0 && (
-        <div className="frontmatter-section">
-          <div className="frontmatter-section-title">
-            <ArrowUpRight size={15} />
-            Related <span>({relatedItems.length})</span>
-          </div>
-          <div className="frontmatter-chip-row">
-            {relatedItems.map((related) => {
-              const { slug, label } = unwrapWikiValue(related);
-              const path = resolveWikiTarget(slug, files);
-              return (
-                <a
-                  className={path ? "frontmatter-related-chip" : "frontmatter-related-chip unresolved"}
-                  href={path ? makeHref({ view: "wiki", path }) : undefined}
-                  key={related}
-                  aria-disabled={!path}
-                  title={path ? label : `Related page not found: ${label}`}
-                  onClick={(event) => {
-                    if (!path || !shouldHandleInApp(event)) return;
-                    event.preventDefault();
-                    onOpen(path);
-                  }}
-                >
-                  {label}
-                  {path && <ArrowUpRight size={12} />}
-                </a>
-              );
-            })}
-          </div>
-        </div>
-      )}
+            {relatedItems.length > 0 && (
+              <div className="frontmatter-section">
+                <div className="frontmatter-section-title">
+                  <ArrowUpRight size={15} />
+                  {t("meta.related")} <span>({relatedItems.length})</span>
+                </div>
+                <div className="frontmatter-chip-row">
+                  {relatedItems.map((related) => {
+                    const { slug, label } = unwrapWikiValue(related);
+                    const path = resolveWikiTarget(slug, files);
+                    return (
+                      <a
+                        className={path ? "frontmatter-related-chip" : "frontmatter-related-chip unresolved"}
+                        href={path ? makeHref({ view: "wiki", path }) : undefined}
+                        key={related}
+                        aria-disabled={!path}
+                        title={path ? label : t("meta.relatedNotFound", { label })}
+                        onClick={(event) => {
+                          if (!path || !shouldHandleInApp(event)) return;
+                          event.preventDefault();
+                          onOpen(path);
+                        }}
+                      >
+                        {label}
+                        {path && <ArrowUpRight size={12} />}
+                      </a>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
-      {extras.length > 0 && (
-        <div className="frontmatter-more">
-          <span>More</span>
-          {extras.map(([key, value]) => (
-            <div key={key}>
-              <code>{key}:</code>
-              <strong>{Array.isArray(value) ? value.join(", ") : value}</strong>
-            </div>
-          ))}
-        </div>
+            {extras.length > 0 && (
+              <div className="frontmatter-more">
+                <span>{t("meta.more")}</span>
+                {extras.map(([key, value]) => (
+                  <div key={key}>
+                    <code>{key}:</code>
+                    <strong>{Array.isArray(value) ? value.join(", ") : value}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </details>
       )}
     </section>
   );
@@ -1367,6 +1720,7 @@ function SettingsView({
   onLanguageChange: (language: string) => void;
 }) {
   const { t } = useTranslation();
+  const isMobile = useMediaQuery("(max-width: 860px)");
   return (
     <article className="view-stack">
       <header className="reader-header">
@@ -1403,7 +1757,10 @@ function SettingsView({
         graphNodes={graphNodes}
         reviews={reviews}
       />
-      <pre className="code-preview compact">{JSON.stringify(health, null, 2)}</pre>
+      <details className="settings-json" open={!isMobile}>
+        <summary>{t("settings.rawHealth")}</summary>
+        <pre className="code-preview compact">{JSON.stringify(health, null, 2)}</pre>
+      </details>
     </article>
   );
 }

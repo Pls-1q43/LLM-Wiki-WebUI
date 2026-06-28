@@ -17,6 +17,12 @@
     "review": "待审阅",
     "settings": "设置"
   },
+  "mobile": {
+    "openFiles": "打开目录",
+    "closeFiles": "关闭目录",
+    "filesAndProjects": "目录与项目",
+    "more": "更多"
+  },
   "common": {
     "all": "全部",
     "auth": "鉴权",
@@ -49,6 +55,14 @@
     "selectPage": "选择一个 Wiki 页面",
     "noPageSelected": "未选择页面",
     "choosePage": "从左侧 Wiki 树选择一个页面。"
+  },
+  "meta": {
+    "details": "页面信息",
+    "sources": "来源",
+    "related": "相关页面",
+    "more": "更多",
+    "sourceNotExposed": "API 暂未暴露来源：{{label}}",
+    "relatedNotFound": "未找到相关页面：{{label}}"
   },
   "sources": {
     "title": "原始资料",
@@ -88,6 +102,8 @@
     "type": "类型",
     "community": "社区",
     "insights": "洞察",
+    "legend": "图例",
+    "closePanel": "关闭面板",
     "graphFilters": "关系图过滤器",
     "quickFilters": "快速过滤",
     "hideIndexOverview": "隐藏索引/概述/日志",
@@ -109,6 +125,7 @@
     "knowledgeGaps": "知识缺口",
     "openPage": "打开页面",
     "doubleClickToggle": "双击切换显示/隐藏",
+    "resizing": "正在适配图谱视图...",
     "nodeTypeLabels": {
       "entity": "实体",
       "concept": "概念",
@@ -192,7 +209,8 @@
     "tokenSource": "Token 来源",
     "proxyEnvBrowser": "代理/env/浏览器",
     "currentProject": "当前项目",
-    "projectPath": "项目路径"
+    "projectPath": "项目路径",
+    "rawHealth": "原始健康检查响应"
   },
   "diagnostics": {
     "title": "诊断",

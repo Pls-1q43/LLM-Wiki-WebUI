@@ -17,6 +17,12 @@
     "review": "Review",
     "settings": "Settings"
   },
+  "mobile": {
+    "openFiles": "Open files",
+    "closeFiles": "Close files",
+    "filesAndProjects": "Files and projects",
+    "more": "More"
+  },
   "common": {
     "all": "All",
     "auth": "Auth",
@@ -49,6 +55,14 @@
     "selectPage": "Select a wiki page",
     "noPageSelected": "No page selected",
     "choosePage": "Choose a page from the exposed wiki tree."
+  },
+  "meta": {
+    "details": "Page info",
+    "sources": "Sources",
+    "related": "Related",
+    "more": "More",
+    "sourceNotExposed": "Source not exposed by API: {{label}}",
+    "relatedNotFound": "Related page not found: {{label}}"
   },
   "sources": {
     "title": "Raw Sources",
@@ -88,6 +102,8 @@
     "type": "Type",
     "community": "Community",
     "insights": "Insights",
+    "legend": "Legend",
+    "closePanel": "Close panel",
     "graphFilters": "Graph Filters",
     "quickFilters": "Quick filters",
     "hideIndexOverview": "Hide index / overview / log",
@@ -109,6 +125,7 @@
     "knowledgeGaps": "Knowledge Gaps",
     "openPage": "Open page",
     "doubleClickToggle": "Double-click to toggle visibility",
+    "resizing": "Fitting graph view...",
     "nodeTypeLabels": {
       "entity": "Entity",
       "concept": "Concept",
@@ -192,7 +209,8 @@
     "tokenSource": "Token source",
     "proxyEnvBrowser": "proxy/env/browser",
     "currentProject": "Current project",
-    "projectPath": "Project path"
+    "projectPath": "Project path",
+    "rawHealth": "Raw health response"
   },
   "diagnostics": {
     "title": "Diagnostics",

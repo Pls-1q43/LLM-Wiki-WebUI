@@ -41,6 +41,7 @@ import {
 } from "../lib/graph-model";
 
 type ColorMode = "type" | "community";
+type MobileGraphPanel = "filters" | "legend" | "node" | "insights" | null;
 type GraphThemePalette = {
   defaultEdge: string;
   label: string;
@@ -227,6 +228,22 @@ function useResolvedDarkMode(): boolean {
   }, []);
 
   return isDark;
+}
+
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() =>
+    typeof window === "undefined" ? false : window.matchMedia(query).matches,
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [query]);
+
+  return matches;
 }
 
 function mixColor(color1: string, color2: string, ratio: number): string {
@@ -649,6 +666,7 @@ export function GraphView({
   onRefresh: () => void;
 }) {
   const { t } = useTranslation();
+  const isMobileGraph = useMediaQuery("(max-width: 860px)");
   const isDarkMode = useResolvedDarkMode();
   const graphPalette = useMemo(() => graphThemePalette(isDarkMode), [isDarkMode]);
   const drawNodeHover = useMemo(() => createGraphNodeHoverRenderer(graphPalette), [graphPalette]);
@@ -660,6 +678,7 @@ export function GraphView({
   const [colorMode, setColorMode] = useState<ColorMode>(initialUrl.colorMode);
   const [showFilters, setShowFilters] = useState(false);
   const [showInsights, setShowInsights] = useState(false);
+  const [activeMobilePanel, setActiveMobilePanel] = useState<MobileGraphPanel>(null);
   const [searchOpen, setSearchOpen] = useState(Boolean(query.trim()));
   const [legendCollapsed, setLegendCollapsed] = useState(false);
   const [nodeScale, setNodeScale] = useState(DEFAULT_NODE_SCALE);
@@ -701,7 +720,7 @@ export function GraphView({
       setIsResizing(false);
     }, 100);
     return () => window.clearTimeout(timer);
-  }, [selectedNodeId, showInsights]);
+  }, [activeMobilePanel, isMobileGraph, selectedNodeId, showInsights]);
 
   const graph = useMemo(() => normalizeGraphData(localNodes, localEdges), [localEdges, localNodes]);
   const filteredGraph = useMemo(() => applyGraphFilters(graph.nodes, graph.edges, filters), [filters, graph.edges, graph.nodes]);
@@ -729,6 +748,10 @@ export function GraphView({
   const searchActive = query.trim().length > 0;
   const activeHighlights = searchActive ? searchedGraph.matchedNodeIds : highlightedNodes;
   const contextNode = nodeMenu ? graph.nodes.find((node) => node.id === nodeMenu.nodeId) : null;
+  const filtersVisible = isMobileGraph ? activeMobilePanel === "filters" : showFilters;
+  const insightsVisible = isMobileGraph ? activeMobilePanel === "insights" : showInsights;
+  const legendVisible = !isMobileGraph || activeMobilePanel === "legend";
+  const nodePanelVisible = Boolean(selectedNode && (!isMobileGraph || activeMobilePanel === "node"));
 
   useEffect(() => {
     writeGraphUrl({ colorMode, selectedNodeId, query, filters });
@@ -737,6 +760,14 @@ export function GraphView({
   useEffect(() => {
     if (query.trim()) setSearchOpen(true);
   }, [query]);
+
+  useEffect(() => {
+    if (!isMobileGraph) {
+      setActiveMobilePanel(null);
+      return;
+    }
+    if (!selectedNodeId && activeMobilePanel === "node") setActiveMobilePanel(null);
+  }, [activeMobilePanel, isMobileGraph, selectedNodeId]);
 
   const resetFilters = useCallback(() => {
     setFilters({
@@ -841,7 +872,14 @@ export function GraphView({
               <Search size={15} />
             </button>
           )}
-          <button className={showFilters ? "active" : ""} type="button" onClick={() => setShowFilters((value) => !value)}>
+          <button
+            className={filtersVisible ? "active" : ""}
+            type="button"
+            onClick={() => {
+              if (isMobileGraph) setActiveMobilePanel((value) => (value === "filters" ? null : "filters"));
+              else setShowFilters((value) => !value);
+            }}
+          >
             <Filter size={15} />
             {t("graph.filter")}
           </button>
@@ -858,12 +896,26 @@ export function GraphView({
             <Layers size={15} />
             {t("graph.community")}
           </button>
+          {isMobileGraph && (
+            <button
+              className={activeMobilePanel === "legend" ? "active" : ""}
+              type="button"
+              title={t("graph.legend")}
+              onClick={() => setActiveMobilePanel((value) => (value === "legend" ? null : "legend"))}
+            >
+              <Layers size={15} />
+              {t("graph.legend")}
+            </button>
+          )}
           {(insights.surprising.length > 0 || insights.gaps.length > 0) && (
             <button
-              className={showInsights ? "active" : ""}
+              className={insightsVisible ? "active" : ""}
               type="button"
               title={t("graph.insights")}
-              onClick={() => setShowInsights((value) => !value)}
+              onClick={() => {
+                if (isMobileGraph) setActiveMobilePanel((value) => (value === "insights" ? null : "insights"));
+                else setShowInsights((value) => !value);
+              }}
             >
               <Lightbulb size={15} />
               <span>{insights.surprising.length + insights.gaps.length}</span>
@@ -908,6 +960,7 @@ export function GraphView({
                 onNodeClick={(nodeId) => {
                   setSelectedNodeId(nodeId);
                   setHighlightedNodes(new Set([nodeId]));
+                  if (isMobileGraph) setActiveMobilePanel("node");
                 }}
                 onNodeContextMenu={handleNodeContextMenu}
                 onHoverChange={setHoverState}
@@ -930,7 +983,7 @@ export function GraphView({
             </div>
           )}
 
-          {showFilters && (
+          {filtersVisible && (
             <GraphFiltersPanel
               filters={filters}
               setFilters={setFilters}
@@ -945,6 +998,7 @@ export function GraphView({
               totalNodes={graph.nodes.length}
               totalEdges={graph.edges.length}
               resetFilters={resetFilters}
+              onClose={isMobileGraph ? () => setActiveMobilePanel(null) : undefined}
             />
           )}
 
@@ -968,28 +1022,32 @@ export function GraphView({
             </div>
           )}
 
-          <GraphLegend
-            colorMode={colorMode}
-            collapsed={legendCollapsed}
-            setCollapsed={setLegendCollapsed}
-            typeCounts={typeCounts}
-            communities={graph.communities}
-            filters={filters}
-            setFilters={setFilters}
-          />
+          {legendVisible && (
+            <GraphLegend
+              colorMode={colorMode}
+              collapsed={legendCollapsed}
+              setCollapsed={setLegendCollapsed}
+              typeCounts={typeCounts}
+              communities={graph.communities}
+              filters={filters}
+              setFilters={setFilters}
+              onClose={isMobileGraph ? () => setActiveMobilePanel(null) : undefined}
+            />
+          )}
         </div>
 
-        {showInsights && (
+        {insightsVisible && (
           <GraphInsightsPanel
             surprising={insights.surprising}
             gaps={insights.gaps}
             highlightedNodes={highlightedNodes}
             setHighlightedNodes={setHighlightedNodes}
             dismiss={(key) => setDismissedInsights((previous) => new Set([...previous, key]))}
+            onClose={isMobileGraph ? () => setActiveMobilePanel(null) : undefined}
           />
         )}
 
-        {selectedNode && (
+        {nodePanelVisible && selectedNode && (
           <GraphNodePanel
             node={selectedNode}
             makeHref={makeHref}
@@ -1019,6 +1077,7 @@ function GraphFiltersPanel({
   totalNodes,
   totalEdges,
   resetFilters,
+  onClose,
 }: {
   filters: GraphFilterState;
   setFilters: React.Dispatch<React.SetStateAction<GraphFilterState>>;
@@ -1033,13 +1092,17 @@ function GraphFiltersPanel({
   totalNodes: number;
   totalEdges: number;
   resetFilters: () => void;
+  onClose?: () => void;
 }) {
   const { t } = useTranslation();
   return (
     <section className="graph-filter-panel">
       <header>
         <strong><Filter size={15} /> {t("graph.graphFilters")}</strong>
-        <button type="button" onClick={resetFilters}>{t("graph.reset")}</button>
+        <span className="graph-panel-actions">
+          <button type="button" onClick={resetFilters}>{t("graph.reset")}</button>
+          {onClose && <button type="button" aria-label={t("graph.closePanel")} onClick={onClose}><X size={14} /></button>}
+        </span>
       </header>
       <div className="graph-filter-section">
         <span>{t("graph.quickFilters")}</span>
@@ -1117,6 +1180,7 @@ function GraphLegend({
   communities,
   filters,
   setFilters,
+  onClose,
 }: {
   colorMode: ColorMode;
   collapsed: boolean;
@@ -1125,13 +1189,17 @@ function GraphLegend({
   communities: CommunityInfo[];
   filters: GraphFilterState;
   setFilters: React.Dispatch<React.SetStateAction<GraphFilterState>>;
+  onClose?: () => void;
 }) {
   const { t } = useTranslation();
   return (
     <section className="graph-legend">
       <header>
         <strong>{colorMode === "type" ? t("graph.nodeTypesLabel") : t("graph.communitiesLabel")}</strong>
-        <button type="button" onClick={() => setCollapsed(!collapsed)}>{collapsed ? ">" : "v"}</button>
+        <span className="graph-panel-actions">
+          <button type="button" onClick={() => setCollapsed(!collapsed)}>{collapsed ? ">" : "v"}</button>
+          {onClose && <button type="button" aria-label={t("graph.closePanel")} onClick={onClose}><X size={14} /></button>}
+        </span>
       </header>
       {!collapsed && (
         colorMode === "type" ? (
@@ -1180,17 +1248,22 @@ function GraphInsightsPanel({
   highlightedNodes,
   setHighlightedNodes,
   dismiss,
+  onClose,
 }: {
   surprising: SurprisingConnection[];
   gaps: KnowledgeGap[];
   highlightedNodes: Set<string>;
   setHighlightedNodes: (ids: Set<string>) => void;
   dismiss: (key: string) => void;
+  onClose?: () => void;
 }) {
   const { t } = useTranslation();
   return (
     <aside className="graph-insights-panel">
-      <header><Lightbulb size={16} /><strong>{t("graph.insights")}</strong></header>
+      <header>
+        <span><Lightbulb size={16} /><strong>{t("graph.insights")}</strong></span>
+        {onClose && <button type="button" aria-label={t("graph.closePanel")} onClick={onClose}><X size={14} /></button>}
+      </header>
       {surprising.length > 0 && (
         <section>
           <h3><Link2 size={15} />{t("graph.surprisingConnections")}</h3>
