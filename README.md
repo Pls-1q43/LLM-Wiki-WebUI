@@ -33,7 +33,7 @@ http://127.0.0.1:19828/api/v1
 Then run this WebUI with one command:
 
 ```bash
-docker run -d --name llm-wiki-webui --restart unless-stopped -p 19829:19829 --add-host=host.docker.internal:host-gateway -e WEBUI_ACCESS_TOKEN=change-this-webui-token -e LLM_WIKI_API_BASE_URL=http://host.docker.internal:19828 -e LLM_WIKI_API_TOKEN=your-native-api-token-if-required ghcr.io/pls-1q43/llm-wiki-webui:0.1.0
+docker run -d --name llm-wiki-webui --restart unless-stopped -p 19829:19829 --add-host=host.docker.internal:host-gateway -e WEBUI_ACCESS_TOKEN=change-this-webui-token -e LLM_WIKI_API_BASE_URL=http://host.docker.internal:19828 -e LLM_WIKI_API_TOKEN=your-native-api-token-if-required ghcr.io/pls-1q43/llm-wiki-webui:0.1.2
 ```
 
 Open:
@@ -49,7 +49,7 @@ Save this as `compose.yaml`, change `WEBUI_ACCESS_TOKEN`, adjust `LLM_WIKI_API_T
 ```yaml
 services:
   llm-wiki-webui:
-    image: ghcr.io/pls-1q43/llm-wiki-webui:0.1.0
+    image: ghcr.io/pls-1q43/llm-wiki-webui:0.1.2
     container_name: llm-wiki-webui
     restart: unless-stopped
     ports:
@@ -162,7 +162,7 @@ http://127.0.0.1:19828/api/v1
 然后用一行命令启动 WebUI：
 
 ```bash
-docker run -d --name llm-wiki-webui --restart unless-stopped -p 19829:19829 --add-host=host.docker.internal:host-gateway -e WEBUI_ACCESS_TOKEN=请改成你的-webui-token -e LLM_WIKI_API_BASE_URL=http://host.docker.internal:19828 -e LLM_WIKI_API_TOKEN=如果原生API需要鉴权则填入你的-token ghcr.io/pls-1q43/llm-wiki-webui:0.1.0
+docker run -d --name llm-wiki-webui --restart unless-stopped -p 19829:19829 --add-host=host.docker.internal:host-gateway -e WEBUI_ACCESS_TOKEN=请改成你的-webui-token -e LLM_WIKI_API_BASE_URL=http://host.docker.internal:19828 -e LLM_WIKI_API_TOKEN=如果原生API需要鉴权则填入你的-token ghcr.io/pls-1q43/llm-wiki-webui:0.1.2
 ```
 
 打开：
@@ -178,7 +178,7 @@ http://localhost:19829
 ```yaml
 services:
   llm-wiki-webui:
-    image: ghcr.io/pls-1q43/llm-wiki-webui:0.1.0
+    image: ghcr.io/pls-1q43/llm-wiki-webui:0.1.2
     container_name: llm-wiki-webui
     restart: unless-stopped
     ports:
