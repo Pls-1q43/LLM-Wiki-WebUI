@@ -166,13 +166,24 @@ function collectTextPaths(nodes: ApiFileNode[], limit = 30) {
     .map((node) => node.path);
 }
 
+function findDefaultWikiPath(nodes: ApiFileNode[]): string | null {
+  const flat = flattenFiles(nodes).filter((node) => !node.isDir && /\.mdx?$/i.test(node.path));
+  return (
+    flat.find((node) => node.path.toLowerCase() === "wiki/overview.md")?.path ??
+    flat.find((node) => /(^|\/)overview\.mdx?$/i.test(node.path))?.path ??
+    flat[0]?.path ??
+    null
+  );
+}
+
+function filePathExists(nodes: ApiFileNode[], path: string | null): boolean {
+  if (!path) return false;
+  return flattenFiles(nodes).some((node) => !node.isDir && node.path === path);
+}
+
 function countDescendantFiles(node: ApiFileNode): number {
   if (!node.isDir) return 1;
   return (node.children ?? []).reduce((total, child) => total + countDescendantFiles(child), 0);
-}
-
-function collectTopLevelDirs(nodes: ApiFileNode[]) {
-  return nodes.filter((node) => node.isDir).map((node) => node.path);
 }
 
 function findAncestorDirs(nodes: ApiFileNode[], selectedPath: string | null): string[] {
@@ -192,6 +203,18 @@ function findAncestorDirs(nodes: ApiFileNode[], selectedPath: string | null): st
   }
   visit(nodes, []);
   return ancestors;
+}
+
+function treeStateKey(nodes: ApiFileNode[]): string {
+  const parts: string[] = [];
+  function visit(items: ApiFileNode[]) {
+    for (const node of items) {
+      parts.push(`${node.isDir ? "d" : "f"}:${node.path}`);
+      if (node.children) visit(node.children);
+    }
+  }
+  visit(nodes);
+  return parts.join("|");
 }
 
 interface ParsedMarkdown {
@@ -315,6 +338,7 @@ export function App() {
       projects[0],
     [projects, selectedProjectId],
   );
+  const defaultWikiPath = useMemo(() => findDefaultWikiPath(files), [files]);
 
   const activeTree = activeView === "sources" ? sources : files;
 
@@ -364,7 +388,10 @@ export function App() {
       ]);
       if (wikiFilesResult.status === "fulfilled") {
         setFiles(wikiFilesResult.value);
-        setSelectedFile((current) => current ?? collectTextPaths(wikiFilesResult.value, 1)[0] ?? null);
+        setSelectedFile((current) => {
+          if (activeView === "sources" && current) return current;
+          return filePathExists(wikiFilesResult.value, current) ? current : findDefaultWikiPath(wikiFilesResult.value);
+        });
       }
       if (sourceFilesResult.status === "fulfilled") setSources(sourceFilesResult.value);
       if (reviewDataResult.status === "fulfilled") setReviews(reviewDataResult.value.reviews);
@@ -376,7 +403,7 @@ export function App() {
       setError(criticalFailure ? String(graphDataResult.reason) : null);
       setLoading("");
     },
-    [refreshFiles, reviewStatus, t],
+    [activeView, refreshFiles, reviewStatus, t],
   );
 
   useEffect(() => {
@@ -528,11 +555,12 @@ export function App() {
 
   const activateView = useCallback(
     (view: View) => {
+      if (view === "wiki" && activeView !== "wiki") setSelectedFile(defaultWikiPath);
       setActiveView(view);
       setIsWorkspaceOpen(false);
       setIsMobileMoreOpen(false);
     },
-    [],
+    [activeView, defaultWikiPath],
   );
 
   useEffect(() => {
@@ -600,13 +628,13 @@ export function App() {
               <a
                 className={activeView === item.id ? "nav-button active" : "nav-button"}
                 key={item.id}
-                href={makeHref({ view: item.id, path: selectedFile })}
+                href={makeHref({ view: item.id, path: item.id === "wiki" ? defaultWikiPath : selectedFile })}
                 title={label}
                 aria-label={label}
                 onClick={(event) => {
                   if (!shouldHandleInApp(event)) return;
                   event.preventDefault();
-                  setActiveView(item.id);
+                  activateView(item.id);
                 }}
               >
                 <Icon size={20} strokeWidth={1.8} />
@@ -628,6 +656,7 @@ export function App() {
         onViewChange={activateView}
         projects={projects}
         selectedFile={selectedFile}
+        defaultWikiPath={defaultWikiPath}
         selectedProject={selectedProject}
         selectedProjectId={selectedProjectId}
       />
@@ -744,6 +773,7 @@ export function App() {
         onViewChange={activateView}
         projects={projects}
         selectedFile={selectedFile}
+        defaultWikiPath={defaultWikiPath}
         selectedProject={selectedProject}
         selectedProjectId={selectedProjectId}
       />
@@ -754,6 +784,7 @@ export function App() {
         makeHref={makeHref}
         onViewChange={activateView}
         selectedFile={selectedFile}
+        defaultWikiPath={defaultWikiPath}
       />
     </main>
   );
@@ -775,6 +806,7 @@ function StatusDot({ health }: { health: ApiHealth | null }) {
 function WorkspacePanel({
   activeTree,
   activeView,
+  defaultWikiPath,
   idPrefix,
   makeHref,
   onOpen,
@@ -788,6 +820,7 @@ function WorkspacePanel({
 }: {
   activeTree: ApiFileNode[];
   activeView: View;
+  defaultWikiPath: string | null;
   idPrefix: string;
   makeHref: (params: AppUrlParams) => string;
   onOpen: (path: string, view?: View) => void;
@@ -838,7 +871,7 @@ function WorkspacePanel({
       <div className="tree-tabs" role="tablist" aria-label={t("workspace.fileRoots")}>
         <a
           className={activeView !== "sources" ? "active" : ""}
-          href={makeHref({ view: "wiki", path: selectedFile })}
+          href={makeHref({ view: "wiki", path: defaultWikiPath })}
           onClick={(event) => {
             if (!shouldHandleInApp(event)) return;
             event.preventDefault();
@@ -928,6 +961,7 @@ function MobileWorkspaceDrawer({
   activeTree,
   activeView,
   closeRef,
+  defaultWikiPath,
   idPrefix,
   isOpen,
   makeHref,
@@ -944,6 +978,7 @@ function MobileWorkspaceDrawer({
   activeTree: ApiFileNode[];
   activeView: View;
   closeRef: RefObject<HTMLButtonElement | null>;
+  defaultWikiPath: string | null;
   idPrefix: string;
   isOpen: boolean;
   makeHref: (params: AppUrlParams) => string;
@@ -974,6 +1009,7 @@ function MobileWorkspaceDrawer({
         <WorkspacePanel
           activeTree={activeTree}
           activeView={activeView}
+          defaultWikiPath={defaultWikiPath}
           idPrefix={idPrefix}
           makeHref={makeHref}
           onOpen={onOpen}
@@ -992,12 +1028,14 @@ function MobileWorkspaceDrawer({
 
 function MobileBottomNav({
   activeView,
+  defaultWikiPath,
   isMoreOpen,
   makeHref,
   onViewChange,
   selectedFile,
 }: {
   activeView: View;
+  defaultWikiPath: string | null;
   isMoreOpen: boolean;
   makeHref: (params: AppUrlParams) => string;
   onViewChange: (view: View) => void;
@@ -1016,7 +1054,7 @@ function MobileBottomNav({
             <a
               className={activeView === item.id ? "mobile-tab active" : "mobile-tab"}
               key={item.id}
-              href={makeHref({ view: item.id, path: selectedFile })}
+              href={makeHref({ view: item.id, path: item.id === "wiki" ? defaultWikiPath : selectedFile })}
               aria-current={activeView === item.id ? "page" : undefined}
               onClick={(event) => {
                 if (!shouldHandleInApp(event)) return;
@@ -1038,7 +1076,7 @@ function MobileBottomNav({
             <a
               className={activeView === item.id ? "active" : ""}
               key={item.id}
-              href={makeHref({ view: item.id, path: selectedFile })}
+              href={makeHref({ view: item.id, path: item.id === "wiki" ? defaultWikiPath : selectedFile })}
               onClick={(event) => {
                 if (!shouldHandleInApp(event)) return;
                 event.preventDefault();
@@ -1067,16 +1105,25 @@ function FileTree({
   onOpen: (path: string, view?: View) => void;
 }) {
   const { t } = useTranslation();
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(collectTopLevelDirs(nodes)));
+  const treeKey = useMemo(() => treeStateKey(nodes), [nodes]);
+  const previousTreeKey = useRef(treeKey);
+  const [expanded, setExpanded] = useState<Set<string>>(
+    () => new Set(findAncestorDirs(nodes, selectedPath)),
+  );
 
   useEffect(() => {
     setExpanded((current) => {
+      const ancestors = findAncestorDirs(nodes, selectedPath);
+      if (previousTreeKey.current !== treeKey) {
+        previousTreeKey.current = treeKey;
+        return new Set(ancestors);
+      }
+      if (ancestors.every((path) => current.has(path))) return current;
       const next = new Set(current);
-      for (const path of collectTopLevelDirs(nodes)) next.add(path);
-      for (const path of findAncestorDirs(nodes, selectedPath)) next.add(path);
+      for (const path of ancestors) next.add(path);
       return next;
     });
-  }, [nodes, selectedPath]);
+  }, [nodes, selectedPath, treeKey]);
 
   if (nodes.length === 0) {
     return <p className="muted-text">{t("workspace.noFiles")}</p>;
