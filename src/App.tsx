@@ -41,6 +41,7 @@ import {
 } from "./lib/api-client";
 import { GraphView } from "./components/GraphView";
 import { unsupportedFeatures } from "./lib/feature-support";
+import { collectMarkdownFiles } from "./lib/full-graph";
 import { flattenFiles, lintReadOnly, type LintIssue } from "./lib/lint";
 
 type View = "wiki" | "sources" | "search" | "graph" | "review" | "lint" | "chat" | "settings";
@@ -330,6 +331,7 @@ export function App() {
   const [isMobileMoreOpen, setIsMobileMoreOpen] = useState(false);
   const workspaceTriggerRef = useRef<HTMLButtonElement>(null);
   const workspaceCloseRef = useRef<HTMLButtonElement>(null);
+  const fullGraphBuildKeyRef = useRef("");
 
   const selectedProject = useMemo(
     () =>
@@ -380,11 +382,12 @@ export function App() {
   const loadProjectData = useCallback(
     async (id: string) => {
       setLoading(t("common.loading"));
-      const [wikiFilesResult, sourceFilesResult, reviewDataResult, graphDataResult] = await Promise.allSettled([
+      setGraphNodes([]);
+      setGraphEdges([]);
+      const [wikiFilesResult, sourceFilesResult, reviewDataResult] = await Promise.allSettled([
         refreshFiles(id, "wiki"),
         refreshFiles(id, "sources"),
         client.reviews(id, { status: reviewStatus, limit: 200 }),
-        client.graph(id, { limit: 1000 }),
       ]);
       if (wikiFilesResult.status === "fulfilled") {
         setFiles(wikiFilesResult.value);
@@ -395,12 +398,7 @@ export function App() {
       }
       if (sourceFilesResult.status === "fulfilled") setSources(sourceFilesResult.value);
       if (reviewDataResult.status === "fulfilled") setReviews(reviewDataResult.value.reviews);
-      if (graphDataResult.status === "fulfilled") {
-        setGraphNodes(graphDataResult.value.nodes);
-        setGraphEdges(graphDataResult.value.edges);
-      }
-      const criticalFailure = graphDataResult.status === "rejected" && wikiFilesResult.status === "rejected";
-      setError(criticalFailure ? String(graphDataResult.reason) : null);
+      setError(wikiFilesResult.status === "rejected" ? String(wikiFilesResult.reason) : null);
       setLoading("");
     },
     [activeView, refreshFiles, reviewStatus, t],
@@ -432,6 +430,37 @@ export function App() {
       setError(err instanceof Error ? err.message : String(err));
     });
   }, [selectedProject?.id, reviewStatus]);
+
+  useEffect(() => {
+    if (activeView !== "graph" || !selectedProject || files.length === 0) return;
+    const markdownCount = collectMarkdownFiles(files).length;
+    if (markdownCount === 0 || graphNodes.length >= markdownCount) return;
+    const buildKey = `${selectedProject.id}:${treeStateKey(files)}`;
+    if (fullGraphBuildKeyRef.current === buildKey) return;
+    fullGraphBuildKeyRef.current = buildKey;
+
+    let alive = true;
+    setLoading(t("graph.buildingFullGraph", { count: markdownCount }));
+    setError(null);
+    client
+      .fullGraph(selectedProject.id)
+      .then((value) => {
+        if (!alive) return;
+        setGraphNodes(value.nodes);
+        setGraphEdges(value.edges);
+      })
+      .catch((err) => {
+        fullGraphBuildKeyRef.current = "";
+        if (alive) setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (alive) setLoading("");
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [activeView, files, graphNodes.length, selectedProject, t]);
 
   useEffect(() => {
     if (!selectedFile || !selectedProject) return;

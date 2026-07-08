@@ -57,4 +57,25 @@ describe("LlmWikiApiClient", () => {
     expect(DEFAULT_FILE_TREE_MAX_FILES).toBe(10_000);
     expect(calls[0]).toContain("maxFiles=10000");
   });
+
+  it("loads the WebUI aggregated full graph endpoint", async () => {
+    const calls: string[] = [];
+    const client = new LlmWikiApiClient({
+      baseUrl: "/api/llm-wiki",
+      fetchImpl: async (url) => {
+        calls.push(String(url));
+        return response({
+          ok: true,
+          nodes: [{ id: "a", label: "A", type: "concept", path: "wiki/a.md", linkCount: 1 }],
+          edges: [{ source: "a", target: "b", weight: 1 }],
+        });
+      },
+    });
+
+    const graph = await client.fullGraph("p1");
+
+    expect(calls[0]).toBe("/api/llm-wiki/projects/p1/graph/full");
+    expect(graph.nodes).toHaveLength(1);
+    expect(graph.edges).toHaveLength(1);
+  });
 });

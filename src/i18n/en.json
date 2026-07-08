@@ -85,6 +85,7 @@
     "links": "Links",
     "openProject": "Open a project to view the graph",
     "buildingGraph": "Building graph...",
+    "buildingFullGraph": "Building full graph from {{count}} wiki pages...",
     "retry": "Retry",
     "noPages": "No pages yet",
     "importSourcesHint": "Import sources to start building the knowledge graph",

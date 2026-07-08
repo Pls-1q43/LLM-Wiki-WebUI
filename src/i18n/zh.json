@@ -85,6 +85,7 @@
     "links": "链接",
     "openProject": "打开项目以查看关系图",
     "buildingGraph": "正在构建关系图...",
+    "buildingFullGraph": "正在从 {{count}} 个 Wiki 页面构建全量图谱...",
     "retry": "重试",
     "noPages": "暂无页面",
     "importSourcesHint": "导入资料以开始构建知识图谱",

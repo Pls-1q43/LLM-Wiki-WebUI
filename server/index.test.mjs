@@ -119,6 +119,7 @@ describe("proxy allowlist", () => {
     expect(isAllowedProxyRequest("DELETE", "/api/llm-wiki/projects/p1/files")).toBe(false);
     expect(isAllowedProxyRequest("POST", "/api/llm-wiki/projects/p1/files/content")).toBe(false);
     expect(isAllowedProxyRequest("GET", "/api/llm-wiki/projects/p1/settings")).toBe(false);
+    expect(isAllowedProxyRequest("GET", "/api/llm-wiki/projects/p1/graph/full")).toBe(false);
     expect(isAllowedProxyRequest("POST", "/api/llm-wiki/projects/p1/chat/s1/cancel")).toBe(false);
     expect(isAllowedProxyRequest("PATCH", "/api/llm-wiki/projects/p1/reviews/r1")).toBe(false);
     expect(isAllowedProxyRequest("POST", "/api/llm-wiki/projects/p1/reviews/resolve")).toBe(false);
@@ -255,5 +256,40 @@ describe("proxy security", () => {
     });
     expect(response.status).toBe(400);
     expect(response.body).toBe("Bad request");
+  });
+
+  it("builds the WebUI full graph endpoint from native files and content APIs", async () => {
+    globalThis.fetch = vi.fn(async (target) => {
+      const url = String(target);
+      if (url.includes("/files?")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            files: [
+              {
+                name: "wiki",
+                path: "wiki",
+                isDir: true,
+                children: [
+                  { name: "Topic.md", path: "wiki/a/Topic.md", isDir: false },
+                  { name: "Topic.md", path: "wiki/b/Topic.md", isDir: false },
+                ],
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify({ ok: false, error: "unexpected" }), { status: 500 });
+    });
+
+    const response = await localRequest("/api/llm-wiki/projects/p1/graph/full", {
+      headers: { authorization: "Bearer webui-test-token" },
+    });
+    const json = response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.nodes.map((node) => node.id).sort()).toEqual(["a/Topic", "b/Topic"]);
+    expect(json.edges).toHaveLength(0);
   });
 });

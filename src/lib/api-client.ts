@@ -220,6 +220,14 @@ export class LlmWikiApiClient {
     };
   }
 
+  async fullGraph(projectId = "current"): Promise<{ nodes: ApiGraphNode[]; edges: ApiGraphEdge[] }> {
+    const json = await this.request(`/projects/${encodeURIComponent(projectId)}/graph/full`);
+    return {
+      nodes: Array.isArray(json.nodes) ? json.nodes.map(parseGraphNode) : [],
+      edges: Array.isArray(json.edges) ? json.edges.map(parseGraphEdge) : [],
+    };
+  }
+
   async rescan(projectId = "current"): Promise<Record<string, unknown>> {
     return this.request(`/projects/${encodeURIComponent(projectId)}/sources/rescan`, {
       method: "POST",

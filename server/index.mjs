@@ -3,6 +3,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildFullGraphFromNativeApi } from "./full-graph.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const root = resolve(__dirname, "../dist");
@@ -45,6 +46,17 @@ function normalizeProxyPath(requestUrl) {
   if (!url.pathname.startsWith("/api/llm-wiki")) return null;
   const suffix = url.pathname.slice("/api/llm-wiki".length) || "/health";
   return suffix.startsWith("/api/v1") ? suffix.slice("/api/v1".length) || "/health" : suffix;
+}
+
+function fullGraphProjectId(requestUrl) {
+  const path = normalizeProxyPath(requestUrl);
+  const match = path?.match(/^\/projects\/([^/]+)\/graph\/full$/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
 }
 
 export function isAllowedProxyRequest(method, requestUrl) {
@@ -318,6 +330,32 @@ async function proxyRequest(req, res) {
   }
 }
 
+async function handleFullGraphRequest(req, res) {
+  if ((req.method ?? "GET").toUpperCase() !== "GET") {
+    sendJson(res, 405, { ok: false, error: "Method not allowed" });
+    return;
+  }
+  const projectId = fullGraphProjectId(req.url ?? "");
+  if (!projectId) {
+    sendJson(res, 404, { ok: false, error: "Full graph route not found" });
+    return;
+  }
+  try {
+    const graph = await buildFullGraphFromNativeApi({
+      projectId,
+      upstreamBase,
+      token,
+      timeoutMs: Math.max(timeoutMs, 180_000),
+    });
+    sendJson(res, 200, graph);
+  } catch (err) {
+    sendJson(res, 502, {
+      ok: false,
+      error: `Failed to build full LLM Wiki graph: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+}
+
 function serveStatic(req, res) {
   let url;
   let requested;
@@ -359,6 +397,10 @@ const server = createServer((req, res) => {
     return;
   }
   if (req.url?.startsWith("/api/llm-wiki")) {
+    if (fullGraphProjectId(req.url)) {
+      void handleFullGraphRequest(req, res);
+      return;
+    }
     void proxyRequest(req, res);
     return;
   }
