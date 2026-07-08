@@ -1,4 +1,5 @@
 export const DEFAULT_API_BASE_URL = "/api/llm-wiki";
+export const DEFAULT_FILE_TREE_MAX_FILES = 10_000;
 
 export interface LlmWikiApiClientOptions {
   baseUrl?: string;
@@ -142,7 +143,7 @@ export class LlmWikiApiClient {
     const params = new URLSearchParams();
     params.set("root", options.root ?? "wiki");
     if (options.recursive !== undefined) params.set("recursive", String(options.recursive));
-    if (options.maxFiles !== undefined) params.set("maxFiles", String(options.maxFiles));
+    params.set("maxFiles", String(options.maxFiles ?? DEFAULT_FILE_TREE_MAX_FILES));
     const json = await this.request(
       `/projects/${encodeURIComponent(projectId)}/files?${params.toString()}`,
     );

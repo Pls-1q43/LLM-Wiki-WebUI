@@ -67,7 +67,7 @@ services:
       # Optional. Server-side token forwarded only to the native LLM Wiki API.
       LLM_WIKI_API_TOKEN: ""
       # Optional upstream API timeout.
-      LLM_WIKI_PROXY_TIMEOUT_MS: "30000"
+      LLM_WIKI_PROXY_TIMEOUT_MS: "90000"
     extra_hosts:
       # Needed on Linux so containers can reach services running on the host.
       - "host.docker.internal:host-gateway"
@@ -96,7 +96,7 @@ extra_hosts:
 | `WEBUI_AUTH_DISABLED` | `false` | Set to `true` only for trusted local development without WebUI auth. |
 | `LLM_WIKI_API_BASE_URL` | `http://host.docker.internal:19828` | Native LLM Wiki API base URL. |
 | `LLM_WIKI_API_TOKEN` | unset | Optional bearer token forwarded server-side to the native API; it is never exposed to the browser. |
-| `LLM_WIKI_PROXY_TIMEOUT_MS` | `30000` | Proxy timeout for upstream API requests. |
+| `LLM_WIKI_PROXY_TIMEOUT_MS` | `90000` | Proxy timeout for upstream API requests. |
 
 Do not commit local tokens. Use `.env.local` for local development; it is ignored by Git.
 
@@ -125,7 +125,7 @@ Useful scripts:
 
 This project is designed to follow the user experience of [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki) where the public HTTP API allows it. Some UI logic and visual patterns are adapted from the original GPLv3 project with attribution.
 
-Native-only capabilities remain disabled until LLM Wiki exposes matching HTTP endpoints. Examples include project creation, source import/delete, wiki editing, auto-fix, chat, and Deep Research orchestration.
+Native-only or not-yet-designed WebUI capabilities remain disabled. Examples include project creation, source import/delete, wiki editing, auto-fix, and Deep Research orchestration; Chat is deferred for a separate design pass even though LLM Wiki 0.6 exposes a non-streaming API.
 
 LLM Wiki WebUI follows the upstream project license: GNU General Public License v3.0. See [NOTICE](NOTICE) for attribution and [LICENSE](LICENSE) for licensing.
 
@@ -196,7 +196,7 @@ services:
       # 可选。只在服务端透传给原生 LLM Wiki API，不会暴露给浏览器。
       LLM_WIKI_API_TOKEN: ""
       # 可选。代理请求上游 API 的超时时间。
-      LLM_WIKI_PROXY_TIMEOUT_MS: "30000"
+      LLM_WIKI_PROXY_TIMEOUT_MS: "90000"
     extra_hosts:
       # Linux 下用于让容器访问宿主机服务。
       - "host.docker.internal:host-gateway"
@@ -225,7 +225,7 @@ extra_hosts:
 | `WEBUI_AUTH_DISABLED` | `false` | 仅可信本地开发环境可设为 `true`，用于关闭 WebUI 鉴权。 |
 | `LLM_WIKI_API_BASE_URL` | `http://host.docker.internal:19828` | 原生 LLM Wiki API 基础地址。 |
 | `LLM_WIKI_API_TOKEN` | 未设置 | 可选 Bearer Token，仅服务端透传给原生 API，不会暴露给浏览器。 |
-| `LLM_WIKI_PROXY_TIMEOUT_MS` | `30000` | 代理请求超时时间。 |
+| `LLM_WIKI_PROXY_TIMEOUT_MS` | `90000` | 代理请求超时时间。 |
 
 不要提交本地 Token。开发时可以放在 `.env.local`，该文件已被 Git 忽略。
 
@@ -254,6 +254,6 @@ WEBUI_ACCESS_TOKEN=请改成你的-webui-token LLM_WIKI_API_BASE_URL=http://127.
 
 本项目会在 HTTP API 能力允许的范围内，尽量对齐 [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki) 的使用体验。部分 UI 逻辑、视觉模式和 Logo 资源来自原 GPLv3 项目，并保留署名。
 
-原生专属能力会保持禁用，直到 LLM Wiki 暴露对应 HTTP 端点。例如：新建项目、资料导入/删除、Wiki 编辑、自动修复、Chat、Deep Research 编排等。
+原生专属或 WebUI 尚未完成设计的能力会保持禁用。例如：新建项目、资料导入/删除、Wiki 编辑、自动修复、Deep Research 编排等；Chat 虽然已在 LLM Wiki 0.6 暴露非流式 API，但会作为独立设计任务另行规划。
 
 LLM Wiki WebUI 跟随主项目协议，使用 GNU General Public License v3.0。署名见 [NOTICE](NOTICE)，许可见 [LICENSE](LICENSE)。

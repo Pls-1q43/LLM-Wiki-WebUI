@@ -373,7 +373,7 @@ export function App() {
   }, []);
 
   const refreshFiles = useCallback(async (id: string, root: RootMode) => {
-    const value = await client.files(id, { root, recursive: true, maxFiles: 5000 });
+    const value = await client.files(id, { root, recursive: true });
     return value.files;
   }, []);
 

@@ -15,6 +15,7 @@ await mkdir(distRoot, { recursive: true });
 await writeFile(resolve(distRoot, "index.html"), "<!doctype html><title>Test Shell</title>", "utf8");
 
 const {
+  DEFAULT_PROXY_TIMEOUT_MS,
   isAllowedProxyRequest,
   isAuthenticated,
   rewriteProxyUrl,
@@ -81,6 +82,10 @@ describe("runtime config", () => {
     expect(() => validateRuntimeConfig({ WEBUI_AUTH_DISABLED: "true" })).not.toThrow();
     expect(() => validateRuntimeConfig({ WEBUI_ACCESS_TOKEN: "strong-token" })).not.toThrow();
   });
+
+  it("uses a 90 second default upstream proxy timeout for large LLM Wiki projects", () => {
+    expect(DEFAULT_PROXY_TIMEOUT_MS).toBe(90_000);
+  });
 });
 
 describe("rewriteProxyUrl", () => {
@@ -114,6 +119,9 @@ describe("proxy allowlist", () => {
     expect(isAllowedProxyRequest("DELETE", "/api/llm-wiki/projects/p1/files")).toBe(false);
     expect(isAllowedProxyRequest("POST", "/api/llm-wiki/projects/p1/files/content")).toBe(false);
     expect(isAllowedProxyRequest("GET", "/api/llm-wiki/projects/p1/settings")).toBe(false);
+    expect(isAllowedProxyRequest("POST", "/api/llm-wiki/projects/p1/chat/s1/cancel")).toBe(false);
+    expect(isAllowedProxyRequest("PATCH", "/api/llm-wiki/projects/p1/reviews/r1")).toBe(false);
+    expect(isAllowedProxyRequest("POST", "/api/llm-wiki/projects/p1/reviews/resolve")).toBe(false);
   });
 });
 

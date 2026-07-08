@@ -181,7 +181,7 @@
     "chatTitle": "Chat and generation",
     "chat": {
       "name": "Chat",
-      "reason": "The native local API exposes POST /projects/{id}/chat, but the current upstream implementation returns 501."
+      "reason": "LLM Wiki 0.6 exposes a non-streaming chat API; WebUI support is intentionally deferred for a separate design pass."
     },
     "projectCreation": {
       "name": "Project creation",

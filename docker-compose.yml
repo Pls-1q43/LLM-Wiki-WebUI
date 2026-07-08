@@ -12,6 +12,6 @@ services:
       WEBUI_AUTH_DISABLED: "${WEBUI_AUTH_DISABLED:-false}"
       LLM_WIKI_API_BASE_URL: "http://host.docker.internal:19828"
       LLM_WIKI_API_TOKEN: "${LLM_WIKI_API_TOKEN:-}"
-      LLM_WIKI_PROXY_TIMEOUT_MS: "30000"
+      LLM_WIKI_PROXY_TIMEOUT_MS: "90000"
     extra_hosts:
       - "host.docker.internal:host-gateway"

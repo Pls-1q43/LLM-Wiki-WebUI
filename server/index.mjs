@@ -13,7 +13,8 @@ const upstreamBase = (process.env.LLM_WIKI_API_BASE_URL || "http://host.docker.i
 const token = process.env.LLM_WIKI_API_TOKEN?.trim();
 const webuiAccessToken = process.env.WEBUI_ACCESS_TOKEN?.trim();
 const authDisabled = process.env.WEBUI_AUTH_DISABLED === "true";
-const timeoutMs = Number(process.env.LLM_WIKI_PROXY_TIMEOUT_MS || 30_000);
+export const DEFAULT_PROXY_TIMEOUT_MS = 90_000;
+const timeoutMs = Number(process.env.LLM_WIKI_PROXY_TIMEOUT_MS || DEFAULT_PROXY_TIMEOUT_MS);
 const maxBodyBytes = 1024 * 1024;
 const sessionCookieName = "llm_wiki_webui_session";
 const sessionSecret = randomBytes(32).toString("base64url");

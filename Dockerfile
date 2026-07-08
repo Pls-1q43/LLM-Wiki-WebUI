@@ -10,7 +10,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=19829
 ENV LLM_WIKI_API_BASE_URL=http://host.docker.internal:19828
-ENV LLM_WIKI_PROXY_TIMEOUT_MS=30000
+ENV LLM_WIKI_PROXY_TIMEOUT_MS=90000
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/server ./server
 USER node

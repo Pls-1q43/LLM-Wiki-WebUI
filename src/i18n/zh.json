@@ -181,7 +181,7 @@
     "chatTitle": "对话与生成",
     "chat": {
       "name": "对话",
-      "reason": "原生本地 API 暴露了 POST /projects/{id}/chat，但当前上游实现返回 501。"
+      "reason": "LLM Wiki 0.6 已暴露非流式对话 API；WebUI 支持会作为独立设计任务另行规划。"
     },
     "projectCreation": {
       "name": "新建项目",

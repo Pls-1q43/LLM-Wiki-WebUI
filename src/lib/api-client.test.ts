@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LlmWikiApiClient, normalizeBaseUrl } from "./api-client";
+import { DEFAULT_FILE_TREE_MAX_FILES, LlmWikiApiClient, normalizeBaseUrl } from "./api-client";
 
 function response(body: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(body), {
@@ -41,5 +41,20 @@ describe("LlmWikiApiClient", () => {
     });
 
     await expect(client.projects()).rejects.toThrow("LLM Wiki API 401: Unauthorized");
+  });
+
+  it("requests the LLM Wiki 0.6 file tree hard limit by default", async () => {
+    const calls: string[] = [];
+    const client = new LlmWikiApiClient({
+      fetchImpl: async (url) => {
+        calls.push(String(url));
+        return response({ ok: true, files: [] });
+      },
+    });
+
+    await client.files("p1", { root: "wiki", recursive: true });
+
+    expect(DEFAULT_FILE_TREE_MAX_FILES).toBe(10_000);
+    expect(calls[0]).toContain("maxFiles=10000");
   });
 });
