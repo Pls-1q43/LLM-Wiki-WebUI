@@ -1,4 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ClipboardEvent,
+  type FormEvent,
+  type MouseEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+} from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -15,7 +27,9 @@ import {
   FileSearch,
   FileText,
   FolderOpen,
+  Globe2,
   GitBranch,
+  ImagePlus,
   Layers,
   Loader2,
   Menu,
@@ -23,12 +37,18 @@ import {
   MoreHorizontal,
   RefreshCw,
   Search,
+  Send,
   Server,
   Settings,
+  Square,
   Tag,
   X,
 } from "lucide-react";
 import {
+  ApiChatImage,
+  ApiChatMode,
+  ApiChatReference,
+  ApiChatToolEvent,
   ApiFileNode,
   ApiGraphEdge,
   ApiGraphNode,
@@ -41,6 +61,15 @@ import {
 } from "./lib/api-client";
 import { GraphView } from "./components/GraphView";
 import { unsupportedFeatures } from "./lib/feature-support";
+import {
+  ACCEPTED_IMAGE_TYPES,
+  MAX_IMAGE_BYTES,
+  MAX_IMAGE_MB,
+  MAX_IMAGES_PER_MESSAGE,
+  chatImageToDataUrl,
+  fileToChatImage,
+  isAcceptedImageType,
+} from "./lib/chat-image-utils";
 import { collectMarkdownFiles } from "./lib/full-graph";
 import { flattenFiles, lintReadOnly, type LintIssue } from "./lib/lint";
 
@@ -52,7 +81,25 @@ type AppUrlParams = {
   path?: string | null;
   q?: string;
   review?: ApiReviewStatus;
+  chatSession?: string | null;
 };
+
+type ChatRole = "user" | "assistant" | "system";
+
+interface WebuiChatMessage {
+  id: string;
+  role: ChatRole;
+  content: string;
+  images?: ApiChatImage[];
+  references?: ApiChatReference[];
+  toolEvents?: ApiChatToolEvent[];
+  usage?: {
+    promptChars?: number;
+    completionChars?: number;
+    referenceCount?: number;
+    toolEventCount?: number;
+  };
+}
 
 const APP_DISPLAY_NAME = "LLM Wiki WebUI";
 
@@ -90,6 +137,7 @@ function readUrlParams(): AppUrlParams {
     path: params.get("path") || null,
     q: params.get("q") || "",
     review: isReviewStatus(review) ? review : undefined,
+    chatSession: params.get("chatSession") || undefined,
   };
 }
 
@@ -107,6 +155,8 @@ function appHref(params: AppUrlParams): string {
   else next.delete("q");
   if (params.review && params.review !== "unresolved") next.set("review", params.review);
   else next.delete("review");
+  if (params.view === "chat" && params.chatSession) next.set("chatSession", params.chatSession);
+  else if (params.chatSession === null || params.view !== "chat") next.delete("chatSession");
   if (params.view && params.view !== "graph") {
     for (const key of ["color", "node", "hideStructural", "hideIsolated", "maxLinks", "types"]) {
       next.delete(key);
@@ -115,6 +165,53 @@ function appHref(params: AppUrlParams): string {
   url.search = next.toString();
   url.hash = "";
   return `${url.pathname}${url.search}`;
+}
+
+function newChatSessionId() {
+  return `webui_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function newMessageId() {
+  return `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function chatStorageKey(projectId: string, sessionId: string) {
+  return `llm-wiki-webui:chat:${projectId}:${sessionId}`;
+}
+
+function loadStoredChat(projectId: string, sessionId: string): WebuiChatMessage[] {
+  try {
+    const raw = window.localStorage.getItem(chatStorageKey(projectId, sessionId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && typeof item === "object")
+      .map((item) => ({
+        id: typeof item.id === "string" ? item.id : newMessageId(),
+        role: item.role === "assistant" || item.role === "system" ? item.role : "user",
+        content: typeof item.content === "string" ? item.content : "",
+        images: Array.isArray(item.images) ? item.images : undefined,
+        references: Array.isArray(item.references) ? item.references : undefined,
+        toolEvents: Array.isArray(item.toolEvents) ? item.toolEvents : undefined,
+        usage: item.usage && typeof item.usage === "object" ? item.usage : undefined,
+      }))
+      .slice(-40);
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredChat(projectId: string, sessionId: string, messages: WebuiChatMessage[]) {
+  try {
+    window.localStorage.setItem(chatStorageKey(projectId, sessionId), JSON.stringify(messages.slice(-40)));
+  } catch {
+    // Local persistence is opportunistic; the native API can still hydrate session history.
+  }
+}
+
+function canUseNativeChat(health: ApiHealth | null) {
+  return health?.agent && health.agent.chat === true;
 }
 
 function shouldHandleInApp(event: MouseEvent<HTMLElement>) {
@@ -318,6 +415,8 @@ export function App() {
   const [fileContent, setFileContent] = useState("");
   const [searchQuery, setSearchQuery] = useState(initialUrlParams.q ?? "");
   const [searchResults, setSearchResults] = useState<ApiSearchResult[]>([]);
+  const [searchMeta, setSearchMeta] = useState<{ mode?: string; tokenHits?: number; vectorHits?: number }>({});
+  const [searchIncludeContent, setSearchIncludeContent] = useState(false);
   const [graphNodes, setGraphNodes] = useState<ApiGraphNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<ApiGraphEdge[]>([]);
   const [reviews, setReviews] = useState<ApiReviewItem[]>([]);
@@ -326,12 +425,20 @@ export function App() {
   const [loading, setLoading] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [rescanMessage, setRescanMessage] = useState<string | null>(null);
+  const [chatSessionId, setChatSessionId] = useState(initialUrlParams.chatSession ?? newChatSessionId);
+  const [chatMessages, setChatMessages] = useState<WebuiChatMessage[]>([]);
+  const [chatMode, setChatMode] = useState<ApiChatMode>("standard");
+  const [chatUseWeb, setChatUseWeb] = useState(false);
+  const [chatUseAnyTxt, setChatUseAnyTxt] = useState(false);
+  const [chatSending, setChatSending] = useState(false);
   const isMobile = useMediaQuery("(max-width: 860px)");
   const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
   const [isMobileMoreOpen, setIsMobileMoreOpen] = useState(false);
   const workspaceTriggerRef = useRef<HTMLButtonElement>(null);
   const workspaceCloseRef = useRef<HTMLButtonElement>(null);
   const fullGraphBuildKeyRef = useRef("");
+  const chatAbortRef = useRef<AbortController | null>(null);
+  const skipNextChatSaveRef = useRef(false);
 
   const selectedProject = useMemo(
     () =>
@@ -352,8 +459,9 @@ export function App() {
         path: params.path === undefined ? selectedFile : params.path,
         q: params.q === undefined ? searchQuery : params.q,
         review: params.review ?? reviewStatus,
+        chatSession: params.chatSession === undefined ? chatSessionId : params.chatSession,
       }),
-    [activeView, reviewStatus, searchQuery, selectedFile, selectedProject?.id, selectedProjectId],
+    [activeView, chatSessionId, reviewStatus, searchQuery, selectedFile, selectedProject?.id, selectedProjectId],
   );
 
   const refreshHealth = useCallback(async () => {
@@ -378,6 +486,15 @@ export function App() {
     const value = await client.files(id, { root, recursive: true });
     return value.files;
   }, []);
+
+  const refreshReviews = useCallback(
+    async (id: string) => {
+      const value = await client.reviews(id, { status: reviewStatus, limit: 200 });
+      setReviews(value.reviews);
+      return value.reviews;
+    },
+    [reviewStatus],
+  );
 
   const loadProjectData = useCallback(
     async (id: string) => {
@@ -430,6 +547,21 @@ export function App() {
       setError(err instanceof Error ? err.message : String(err));
     });
   }, [selectedProject?.id, reviewStatus]);
+
+  useEffect(() => {
+    if (!selectedProject) return;
+    skipNextChatSaveRef.current = true;
+    setChatMessages(loadStoredChat(selectedProject.id, chatSessionId));
+  }, [chatSessionId, selectedProject?.id]);
+
+  useEffect(() => {
+    if (!selectedProject) return;
+    if (skipNextChatSaveRef.current) {
+      skipNextChatSaveRef.current = false;
+      return;
+    }
+    saveStoredChat(selectedProject.id, chatSessionId, chatMessages);
+  }, [chatMessages, chatSessionId, selectedProject?.id]);
 
   useEffect(() => {
     if (activeView !== "graph" || !selectedProject || files.length === 0) return;
@@ -486,10 +618,11 @@ export function App() {
       path: selectedFile,
       q: searchQuery,
       review: reviewStatus,
+      chatSession: chatSessionId,
     });
     const current = `${window.location.pathname}${window.location.search}`;
     if (next !== current) window.history.replaceState(null, "", next);
-  }, [activeView, reviewStatus, searchQuery, selectedFile, selectedProject?.id, selectedProjectId]);
+  }, [activeView, chatSessionId, reviewStatus, searchQuery, selectedFile, selectedProject?.id, selectedProjectId]);
 
   useEffect(() => {
     function handlePopState() {
@@ -499,6 +632,7 @@ export function App() {
       setSelectedFile(params.path ?? null);
       setSearchQuery(params.q ?? "");
       setReviewStatus(params.review ?? "unresolved");
+      setChatSessionId(params.chatSession ?? newChatSessionId());
     }
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
@@ -511,15 +645,16 @@ export function App() {
     try {
       const value = await client.search(selectedProject.id, searchQuery, {
         topK: 12,
-        includeContent: false,
+        includeContent: searchIncludeContent,
       });
       setSearchResults(value.results);
+      setSearchMeta({ mode: value.mode, tokenHits: value.tokenHits, vectorHits: value.vectorHits });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading("");
     }
-  }, [searchQuery, selectedProject, t]);
+  }, [searchIncludeContent, searchQuery, selectedProject, t]);
 
   useEffect(() => {
     if (activeView !== "search" || !searchQuery.trim()) return;
@@ -573,6 +708,128 @@ export function App() {
     }
   }, [refreshFiles, selectedProject, t]);
 
+  const startNewChat = useCallback(() => {
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = null;
+    setChatSending(false);
+    setChatSessionId(newChatSessionId());
+    setChatMessages([]);
+    setActiveView("chat");
+  }, []);
+
+  const sendChatMessage = useCallback(
+    async (content: string, images: ApiChatImage[]) => {
+      if (!selectedProject || chatSending) return;
+      const trimmed = content.trim();
+      if (!trimmed && images.length === 0) return;
+      const userMessage: WebuiChatMessage = {
+        id: newMessageId(),
+        role: "user",
+        content: trimmed,
+        images,
+      };
+      const history = chatMessages
+        .filter((message) => message.role === "user" || message.role === "assistant")
+        .slice(-12)
+        .map((message) => ({ role: message.role, content: message.content }));
+      const controller = new AbortController();
+      chatAbortRef.current = controller;
+      setChatSending(true);
+      setError(null);
+      setChatMessages((current) => [...current, userMessage]);
+      try {
+        const response = await client.chat(selectedProject.id, trimmed, {
+          sessionId: chatSessionId,
+          mode: chatMode,
+          wiki: true,
+          web: chatUseWeb,
+          anytxt: chatUseAnyTxt,
+          includeContent: false,
+          images,
+          history,
+          historyExplicit: history.length > 0,
+          persistSession: true,
+          signal: controller.signal,
+        });
+        if (response.sessionId && response.sessionId !== chatSessionId) {
+          setChatSessionId(response.sessionId);
+        }
+        setChatMessages((current) => [
+          ...current,
+          {
+            id: newMessageId(),
+            role: "assistant",
+            content: response.message.content,
+            references: response.references,
+            toolEvents: response.toolEvents,
+            usage: response.usage,
+          },
+        ]);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : String(err));
+        setChatMessages((current) => [
+          ...current,
+          {
+            id: newMessageId(),
+            role: "system",
+            content: err instanceof Error ? err.message : String(err),
+          },
+        ]);
+      } finally {
+        if (chatAbortRef.current === controller) chatAbortRef.current = null;
+        setChatSending(false);
+      }
+    },
+    [chatMessages, chatMode, chatSending, chatSessionId, chatUseAnyTxt, chatUseWeb, selectedProject],
+  );
+
+  const cancelChat = useCallback(async () => {
+    if (!selectedProject) return;
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = null;
+    setChatSending(false);
+    try {
+      await client.cancelChat(selectedProject.id, chatSessionId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [chatSessionId, selectedProject]);
+
+  const patchReview = useCallback(
+    async (reviewId: string, resolved: boolean, action?: string) => {
+      if (!selectedProject) return;
+      setLoading(t("review.updating"));
+      setError(null);
+      try {
+        await client.patchReview(selectedProject.id, reviewId, { resolved, action });
+        await refreshReviews(selectedProject.id);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoading("");
+      }
+    },
+    [refreshReviews, selectedProject, t],
+  );
+
+  const bulkResolveReviews = useCallback(
+    async (ids: string[]) => {
+      if (!selectedProject || ids.length === 0) return;
+      setLoading(t("review.updating"));
+      setError(null);
+      try {
+        await client.bulkResolveReviews(selectedProject.id, ids, "Resolved in WebUI");
+        await refreshReviews(selectedProject.id);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoading("");
+      }
+    },
+    [refreshReviews, selectedProject, t],
+  );
+
   const openPath = useCallback(
     (path: string, view: View = "wiki") => {
       setSelectedFile(path);
@@ -624,7 +881,7 @@ export function App() {
       if (activeView === "review") return t("review.title");
       if (activeView === "lint") return t("lint.title");
       if (activeView === "settings") return t("nav.settings");
-      if (activeView === "chat") return t("unsupported.chatTitle");
+      if (activeView === "chat") return t("chat.title");
       const item = navItems.find((navItem) => navItem.id === activeView);
       return item ? t(item.labelKey) : t("app.title");
     })();
@@ -742,6 +999,9 @@ export function App() {
             query={searchQuery}
             setQuery={setSearchQuery}
             results={searchResults}
+            meta={searchMeta}
+            includeContent={searchIncludeContent}
+            setIncludeContent={setSearchIncludeContent}
             onSearch={runSearch}
             onOpen={(path) => openPath(path, "wiki")}
             makeHref={makeHref}
@@ -765,12 +1025,33 @@ export function App() {
             setStatus={setReviewStatus}
             onOpen={(path) => openPath(path, "wiki")}
             makeHref={makeHref}
+            onPatch={patchReview}
+            onBulkResolve={bulkResolveReviews}
           />
         )}
         {activeView === "lint" && (
           <LintView issues={lintIssues} onRun={runLint} makeHref={makeHref} onOpen={(path) => openPath(path, "wiki")} />
         )}
-        {activeView === "chat" && <UnsupportedView title={t("unsupported.chatTitle")} />}
+        {activeView === "chat" && (
+          <ChatView
+            health={health}
+            messages={chatMessages}
+            mode={chatMode}
+            setMode={setChatMode}
+            useWeb={chatUseWeb}
+            setUseWeb={setChatUseWeb}
+            useAnyTxt={chatUseAnyTxt}
+            setUseAnyTxt={setChatUseAnyTxt}
+            sending={chatSending}
+            sessionId={chatSessionId}
+            onNewChat={startNewChat}
+            onSend={sendChatMessage}
+            onCancel={cancelChat}
+            onOpenWiki={(path) => openPath(path, "wiki")}
+            onOpenSource={(path) => openPath(path, "sources")}
+            makeHref={makeHref}
+          />
+        )}
         {activeView === "settings" && (
           <SettingsView
             health={health}
@@ -1586,6 +1867,9 @@ function SearchView({
   query,
   setQuery,
   results,
+  meta,
+  includeContent,
+  setIncludeContent,
   onSearch,
   onOpen,
   makeHref,
@@ -1593,6 +1877,9 @@ function SearchView({
   query: string;
   setQuery: (query: string) => void;
   results: ApiSearchResult[];
+  meta: { mode?: string; tokenHits?: number; vectorHits?: number };
+  includeContent: boolean;
+  setIncludeContent: (value: boolean) => void;
   onSearch: () => void;
   onOpen: (path: string) => void;
   makeHref: (params: AppUrlParams) => string;
@@ -1606,6 +1893,18 @@ function SearchView({
           <h2>{t("search.heading")}</h2>
         </div>
       </header>
+      <div className="search-meta-row">
+        <label>
+          <input
+            type="checkbox"
+            checked={includeContent}
+            onChange={(event) => setIncludeContent(event.target.checked)}
+          />
+          {t("search.includeContent")}
+        </label>
+        <span>{t("search.mode", { mode: meta.mode ?? t("common.unknown") })}</span>
+        <span>{t("search.hitStats", { token: meta.tokenHits ?? 0, vector: meta.vectorHits ?? 0 })}</span>
+      </div>
       <form
         className="search-row"
         onSubmit={(event) => {
@@ -1653,14 +1952,32 @@ function ReviewView({
   setStatus,
   onOpen,
   makeHref,
+  onPatch,
+  onBulkResolve,
 }: {
   reviews: ApiReviewItem[];
   status: ApiReviewStatus;
   setStatus: (status: ApiReviewStatus) => void;
   onOpen: (path: string) => void;
   makeHref: (params: AppUrlParams) => string;
+  onPatch: (reviewId: string, resolved: boolean, action?: string) => Promise<void>;
+  onBulkResolve: (ids: string[]) => Promise<void>;
 }) {
   const { t } = useTranslation();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const unresolved = reviews.filter((item) => !item.resolved);
+  const selectedUnresolvedIds = unresolved.map((item) => item.id).filter((id) => selectedIds.has(id));
+  const allUnresolvedSelected = unresolved.length > 0 && selectedUnresolvedIds.length === unresolved.length;
+
+  function setSelected(id: string, selected: boolean) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (selected) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
   return (
     <article className="view-stack">
       <header className="reader-header">
@@ -1668,16 +1985,50 @@ function ReviewView({
           <p className="eyebrow">{t("review.title")}</p>
           <h2>{t("review.summary", { count: reviews.length })}</h2>
         </div>
-        <select className="select-input narrow" value={status} onChange={(event) => setStatus(event.target.value as ApiReviewStatus)}>
-          <option value="unresolved">{t("review.unresolved")}</option>
-          <option value="resolved">{t("review.resolved")}</option>
-          <option value="all">{t("review.all")}</option>
-        </select>
+        <div className="review-header-actions">
+          <select className="select-input narrow" value={status} onChange={(event) => setStatus(event.target.value as ApiReviewStatus)}>
+            <option value="unresolved">{t("review.unresolved")}</option>
+            <option value="resolved">{t("review.resolved")}</option>
+            <option value="all">{t("review.all")}</option>
+          </select>
+          <button
+            className="secondary-action"
+            type="button"
+            disabled={selectedUnresolvedIds.length === 0}
+            onClick={() => void onBulkResolve(selectedUnresolvedIds).then(() => setSelectedIds(new Set()))}
+          >
+            <CheckCircle2 size={17} />
+            {t("review.resolveSelected", { count: selectedUnresolvedIds.length })}
+          </button>
+        </div>
       </header>
       <div className="result-list">
+        {unresolved.length > 0 && (
+          <label className="review-select-all">
+            <input
+              type="checkbox"
+              checked={allUnresolvedSelected}
+              onChange={(event) => {
+                if (event.target.checked) setSelectedIds(new Set(unresolved.map((item) => item.id)));
+                else setSelectedIds(new Set());
+              }}
+            />
+            {t("review.selectAllPending")}
+          </label>
+        )}
         {reviews.map((item) => (
           <section className="review-row" key={item.id || item.title}>
-            <strong>{item.title || item.type}</strong>
+            <div className="review-title-row">
+              {!item.resolved && (
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(item.id)}
+                  aria-label={t("review.selectItem")}
+                  onChange={(event) => setSelected(item.id, event.target.checked)}
+                />
+              )}
+              <strong>{item.title || item.type}</strong>
+            </div>
             <p>{item.description}</p>
             {item.sourcePath && (
               <a
@@ -1695,11 +2046,388 @@ function ReviewView({
             <div className="chip-row">
               <span>{item.type || t("review.title")}</span>
               <span>{item.resolved ? t("common.resolved") : t("common.unresolved")}</span>
+              {item.resolvedAction && <span>{item.resolvedAction}</span>}
+            </div>
+            {item.options.length > 0 && (
+              <div className="review-options-note">
+                {t("review.nativeOptions")} {item.options.map((option) => option.label).join(", ")}
+              </div>
+            )}
+            <div className="review-actions">
+              {item.resolved ? (
+                <button className="secondary-action" type="button" onClick={() => void onPatch(item.id, false)}>
+                  <RefreshCw size={16} />
+                  {t("review.reopen")}
+                </button>
+              ) : (
+                <>
+                  <button className="primary-action" type="button" onClick={() => void onPatch(item.id, true, "Resolved in WebUI")}>
+                    <CheckCircle2 size={16} />
+                    {t("review.resolve")}
+                  </button>
+                  <button className="secondary-action" type="button" onClick={() => void onPatch(item.id, true, "Skip")}>
+                    <X size={16} />
+                    {t("review.skip")}
+                  </button>
+                </>
+              )}
             </div>
           </section>
         ))}
       </div>
     </article>
+  );
+}
+
+function ChatView({
+  health,
+  messages,
+  mode,
+  setMode,
+  useWeb,
+  setUseWeb,
+  useAnyTxt,
+  setUseAnyTxt,
+  sending,
+  sessionId,
+  onNewChat,
+  onSend,
+  onCancel,
+  onOpenWiki,
+  onOpenSource,
+  makeHref,
+}: {
+  health: ApiHealth | null;
+  messages: WebuiChatMessage[];
+  mode: ApiChatMode;
+  setMode: (mode: ApiChatMode) => void;
+  useWeb: boolean;
+  setUseWeb: (value: boolean) => void;
+  useAnyTxt: boolean;
+  setUseAnyTxt: (value: boolean) => void;
+  sending: boolean;
+  sessionId: string;
+  onNewChat: () => void;
+  onSend: (content: string, images: ApiChatImage[]) => Promise<void>;
+  onCancel: () => Promise<void>;
+  onOpenWiki: (path: string) => void;
+  onOpenSource: (path: string) => void;
+  makeHref: (params: AppUrlParams) => string;
+}) {
+  const { t } = useTranslation();
+  const chatAvailable = canUseNativeChat(health);
+  const streaming = health?.agent?.streaming === true;
+
+  return (
+    <article className="view-stack chat-view">
+      <header className="reader-header chat-header">
+        <div>
+          <p className="eyebrow">{t("chat.eyebrow")}</p>
+          <h2>{t("chat.heading")}</h2>
+        </div>
+        <div className="chat-header-actions">
+          <span className="status-pill">{streaming ? t("chat.streaming") : t("chat.nonStreaming")}</span>
+          <button className="secondary-action" type="button" onClick={onNewChat}>
+            <MessageSquare size={17} />
+            {t("chat.newChat")}
+          </button>
+        </div>
+      </header>
+
+      {!chatAvailable && (
+        <div className="notice-box">{t("chat.unavailable")}</div>
+      )}
+
+      <div className="chat-session-meta">
+        <span>{t("chat.session")}</span>
+        <code>{sessionId}</code>
+      </div>
+
+      <div className="chat-messages" aria-live="polite">
+        {messages.length === 0 ? (
+          <EmptyState title={t("chat.emptyTitle")} body={t("chat.emptyBody")} />
+        ) : (
+          messages.map((message) => (
+            <ChatMessageBubble
+              key={message.id}
+              message={message}
+              makeHref={makeHref}
+              onOpenWiki={onOpenWiki}
+              onOpenSource={onOpenSource}
+            />
+          ))
+        )}
+        {sending && (
+          <div className="chat-thinking">
+            <Loader2 className="spin" size={16} />
+            {t("chat.thinking")}
+          </div>
+        )}
+      </div>
+
+      <ChatComposer
+        disabled={!chatAvailable || sending}
+        mode={mode}
+        setMode={setMode}
+        useWeb={useWeb}
+        setUseWeb={setUseWeb}
+        useAnyTxt={useAnyTxt}
+        setUseAnyTxt={setUseAnyTxt}
+        sending={sending}
+        onSend={onSend}
+        onCancel={onCancel}
+      />
+    </article>
+  );
+}
+
+function ChatMessageBubble({
+  message,
+  makeHref,
+  onOpenWiki,
+  onOpenSource,
+}: {
+  message: WebuiChatMessage;
+  makeHref: (params: AppUrlParams) => string;
+  onOpenWiki: (path: string) => void;
+  onOpenSource: (path: string) => void;
+}) {
+  const { t } = useTranslation();
+  const isUser = message.role === "user";
+  return (
+    <section className={`chat-message ${message.role}`}>
+      <div className="chat-avatar">{isUser ? "U" : message.role === "system" ? "!" : "AI"}</div>
+      <div className="chat-message-body">
+        {message.images && message.images.length > 0 && (
+          <div className="chat-image-row">
+            {message.images.map((image, index) => (
+              <img key={`${image.mediaType}-${index}`} src={chatImageToDataUrl(image)} alt="" />
+            ))}
+          </div>
+        )}
+        {message.content && (
+          <div className="chat-markdown">
+            {isUser || message.role === "system" ? (
+              <p>{message.content}</p>
+            ) : (
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+            )}
+          </div>
+        )}
+        {message.references && message.references.length > 0 && (
+          <div className="chat-references">
+            <strong>{t("chat.references")}</strong>
+            {message.references.map((reference, index) => {
+              const external = /^https?:\/\//i.test(reference.path);
+              const source = reference.kind === "source" || reference.path.startsWith("raw/sources/");
+              const href = external
+                ? reference.path
+                : makeHref({ view: source ? "sources" : "wiki", path: reference.path });
+              return (
+                <a
+                  key={`${reference.path}-${index}`}
+                  href={href}
+                  target={external ? "_blank" : undefined}
+                  rel={external ? "noreferrer" : undefined}
+                  onClick={(event) => {
+                    if (external || !shouldHandleInApp(event)) return;
+                    event.preventDefault();
+                    if (source) onOpenSource(reference.path);
+                    else onOpenWiki(reference.path);
+                  }}
+                >
+                  <span>{reference.title || reference.path}</span>
+                  <em>{reference.kind} · {reference.score?.toFixed(3) ?? t("common.unknown")}</em>
+                </a>
+              );
+            })}
+          </div>
+        )}
+        {message.toolEvents && message.toolEvents.length > 0 && (
+          <div className="chat-tool-events">
+            {message.toolEvents.map((event, index) => (
+              <span key={`${event.tool}-${index}`}>
+                {event.tool}: {event.status}{event.detail ? ` (${event.detail})` : ""}
+              </span>
+            ))}
+          </div>
+        )}
+        {message.usage && (
+          <div className="chat-usage">
+            {t("chat.usage", {
+              prompt: message.usage.promptChars ?? 0,
+              completion: message.usage.completionChars ?? 0,
+              references: message.usage.referenceCount ?? message.references?.length ?? 0,
+            })}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ChatComposer({
+  disabled,
+  mode,
+  setMode,
+  useWeb,
+  setUseWeb,
+  useAnyTxt,
+  setUseAnyTxt,
+  sending,
+  onSend,
+  onCancel,
+}: {
+  disabled: boolean;
+  mode: ApiChatMode;
+  setMode: (mode: ApiChatMode) => void;
+  useWeb: boolean;
+  setUseWeb: (value: boolean) => void;
+  useAnyTxt: boolean;
+  setUseAnyTxt: (value: boolean) => void;
+  sending: boolean;
+  onSend: (content: string, images: ApiChatImage[]) => Promise<void>;
+  onCancel: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [value, setValue] = useState("");
+  const [images, setImages] = useState<ApiChatImage[]>([]);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function addFiles(files: File[]) {
+    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+    if (imageFiles.length === 0) return;
+    const accepted: ApiChatImage[] = [];
+    let error: string | null = null;
+    let remaining = MAX_IMAGES_PER_MESSAGE - images.length;
+    for (const file of imageFiles) {
+      if (remaining <= 0) {
+        error = t("chat.tooManyImages", { max: MAX_IMAGES_PER_MESSAGE });
+        break;
+      }
+      if (!isAcceptedImageType(file.type)) {
+        error = t("chat.unsupportedImageType", { type: file.type || "?" });
+        continue;
+      }
+      if (file.size > MAX_IMAGE_BYTES) {
+        error = t("chat.imageTooLarge", { max: MAX_IMAGE_MB, name: file.name || "image" });
+        continue;
+      }
+      accepted.push(await fileToChatImage(file));
+      remaining -= 1;
+    }
+    if (accepted.length > 0) setImages((current) => [...current, ...accepted].slice(0, MAX_IMAGES_PER_MESSAGE));
+    setImageError(error);
+  }
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (disabled && !sending) return;
+    if (sending) {
+      void onCancel();
+      return;
+    }
+    const nextImages = images;
+    const text = value;
+    if (!text.trim() && nextImages.length === 0) return;
+    setValue("");
+    setImages([]);
+    setImageError(null);
+    void onSend(text, nextImages);
+  }
+
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const files: File[] = [];
+    for (const item of Array.from(event.clipboardData?.items ?? [])) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (files.length > 0) {
+      event.preventDefault();
+      void addFiles(files);
+    }
+  }
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      handleSubmit(event);
+    }
+  }
+
+  return (
+    <form className="chat-composer" onSubmit={handleSubmit}>
+      <div className="chat-controls">
+        <label>
+          <span>{t("chat.mode")}</span>
+          <select value={mode} onChange={(event) => setMode(event.target.value as ApiChatMode)}>
+            <option value="fast">{t("chat.modes.fast")}</option>
+            <option value="standard">{t("chat.modes.standard")}</option>
+            <option value="deep">{t("chat.modes.deep")}</option>
+            <option value="local_first">{t("chat.modes.localFirst")}</option>
+          </select>
+        </label>
+        <label className="chat-toggle">
+          <input type="checkbox" checked readOnly />
+          {t("chat.wiki")}
+        </label>
+        <label className="chat-toggle">
+          <input type="checkbox" checked={useWeb} onChange={(event) => setUseWeb(event.target.checked)} />
+          <Globe2 size={15} />
+          {t("chat.web")}
+        </label>
+        <label className="chat-toggle">
+          <input type="checkbox" checked={useAnyTxt} onChange={(event) => setUseAnyTxt(event.target.checked)} />
+          {t("chat.anytxt")}
+        </label>
+      </div>
+      {images.length > 0 && (
+        <div className="chat-image-preview">
+          {images.map((image, index) => (
+            <span key={`${image.mediaType}-${index}`}>
+              <img src={chatImageToDataUrl(image)} alt="" />
+              <button type="button" onClick={() => setImages((current) => current.filter((_, i) => i !== index))}>
+                <X size={13} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {imageError && <div className="chat-image-error">{imageError}</div>}
+      <div className="chat-input-row">
+        <textarea
+          value={value}
+          onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setValue(event.target.value)}
+          onPaste={handlePaste}
+          onKeyDown={handleKeyDown}
+          placeholder={t("chat.placeholder")}
+          disabled={disabled}
+          rows={2}
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPTED_IMAGE_TYPES.join(",")}
+          multiple
+          hidden
+          onChange={(event) => {
+            const files = event.target.files ? Array.from(event.target.files) : [];
+            void addFiles(files);
+            event.target.value = "";
+          }}
+        />
+        <button className="secondary-action icon-only" type="button" disabled={disabled} onClick={() => fileInputRef.current?.click()}>
+          <ImagePlus size={18} />
+        </button>
+        <button className="primary-action icon-only" type="submit" disabled={disabled && !sending}>
+          {sending ? <Square size={17} /> : <Send size={17} />}
+        </button>
+      </div>
+      <p className="chat-hint">{t("chat.imageHint", { max: MAX_IMAGE_MB, count: MAX_IMAGES_PER_MESSAGE })}</p>
+    </form>
   );
 }
 
@@ -1809,6 +2537,9 @@ function SettingsView({
         <InfoTile label={t("settings.apiStatus")} value={health?.status ?? t("common.unknown")} />
         <InfoTile label={t("settings.apiEnabled")} value={String(health?.enabled ?? t("common.unknown"))} />
         <InfoTile label={t("settings.authRequired")} value={String(health?.authRequired ?? t("common.unknown"))} />
+        <InfoTile label={t("settings.lanAccess")} value={String(health?.allowLanAccess ?? t("common.unknown"))} />
+        <InfoTile label={t("settings.agentChat")} value={String(health?.agent?.chat ?? t("common.unknown"))} />
+        <InfoTile label={t("settings.agentStreaming")} value={String(health?.agent?.streaming ?? t("common.unknown"))} />
         <InfoTile label={t("settings.tokenSource")} value={health?.tokenSource ?? t("settings.proxyEnvBrowser")} />
         <InfoTile label={t("settings.currentProject")} value={project?.name ?? t("common.none")} />
         <InfoTile label={t("settings.projectPath")} value={project?.path ?? t("common.none")} />
@@ -1879,6 +2610,9 @@ function DetailsPanel({
         <InfoTile label={t("diagnostics.sourceFiles")} value={String(sourceCount)} />
         <InfoTile label={t("diagnostics.graphNodes")} value={String(graphNodes.length)} />
         <InfoTile label={t("diagnostics.reviewItems")} value={String(reviews.length)} />
+        <InfoTile label={t("diagnostics.lanAccess")} value={String(health?.allowLanAccess ?? t("common.unknown"))} />
+        <InfoTile label={t("diagnostics.agentChat")} value={String(health?.agent?.chat ?? t("common.unknown"))} />
+        <InfoTile label={t("diagnostics.agentStreaming")} value={String(health?.agent?.streaming ?? t("common.unknown"))} />
       </div>
       <div className="notice-box small">
         {t("diagnostics.notice")}

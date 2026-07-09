@@ -17,6 +17,7 @@ const authDisabled = process.env.WEBUI_AUTH_DISABLED === "true";
 export const DEFAULT_PROXY_TIMEOUT_MS = 90_000;
 const timeoutMs = Number(process.env.LLM_WIKI_PROXY_TIMEOUT_MS || DEFAULT_PROXY_TIMEOUT_MS);
 const maxBodyBytes = 1024 * 1024;
+const maxChatBodyBytes = 40 * 1024 * 1024;
 const sessionCookieName = "llm_wiki_webui_session";
 const sessionSecret = randomBytes(32).toString("base64url");
 
@@ -75,6 +76,11 @@ export function isAllowedProxyRequest(method, requestUrl) {
     if (/^\/projects\/[^/]+\/search$/.test(path)) return true;
     if (/^\/projects\/[^/]+\/sources\/rescan$/.test(path)) return true;
     if (/^\/projects\/[^/]+\/chat$/.test(path)) return true;
+    if (/^\/projects\/[^/]+\/chat\/[^/]+\/cancel$/.test(path)) return true;
+    if (/^\/projects\/[^/]+\/reviews\/resolve$/.test(path)) return true;
+  }
+  if (normalizedMethod === "PATCH") {
+    if (/^\/projects\/[^/]+\/reviews\/[^/]+$/.test(path)) return true;
   }
   return false;
 }
@@ -259,21 +265,34 @@ async function handleAuth(req, res) {
   res.end();
 }
 
-function readBody(req) {
+function bodyLimitForRequest(req) {
+  const method = (req.method ?? "GET").toUpperCase();
+  const path = normalizeProxyPath(req.url ?? "");
+  if (method === "POST" && /^\/projects\/[^/]+\/chat$/.test(path ?? "")) return maxChatBodyBytes;
+  return maxBodyBytes;
+}
+
+function readBody(req, limit = maxBodyBytes) {
   return new Promise((resolveBody, reject) => {
     const chunks = [];
     let total = 0;
+    let rejected = false;
     req.on("data", (chunk) => {
+      if (rejected) return;
       total += chunk.length;
-      if (total > maxBodyBytes) {
+      if (total > limit) {
+        rejected = true;
         reject(new Error("Request body too large"));
-        req.destroy();
         return;
       }
       chunks.push(chunk);
     });
-    req.on("end", () => resolveBody(Buffer.concat(chunks)));
-    req.on("error", reject);
+    req.on("end", () => {
+      if (!rejected) resolveBody(Buffer.concat(chunks));
+    });
+    req.on("error", (err) => {
+      if (!rejected) reject(err);
+    });
   });
 }
 
@@ -291,7 +310,7 @@ async function proxyRequest(req, res) {
 
   let body;
   try {
-    body = req.method === "GET" || req.method === "HEAD" ? undefined : await readBody(req);
+    body = req.method === "GET" || req.method === "HEAD" ? undefined : await readBody(req, bodyLimitForRequest(req));
   } catch (err) {
     sendJson(res, 413, { ok: false, error: err instanceof Error ? err.message : String(err) });
     return;

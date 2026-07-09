@@ -113,6 +113,9 @@ describe("proxy allowlist", () => {
     expect(isAllowedProxyRequest("GET", "/api/llm-wiki/projects/p1/reviews")).toBe(true);
     expect(isAllowedProxyRequest("POST", "/api/llm-wiki/projects/p1/sources/rescan")).toBe(true);
     expect(isAllowedProxyRequest("POST", "/api/llm-wiki/projects/p1/chat")).toBe(true);
+    expect(isAllowedProxyRequest("POST", "/api/llm-wiki/projects/p1/chat/s1/cancel")).toBe(true);
+    expect(isAllowedProxyRequest("PATCH", "/api/llm-wiki/projects/p1/reviews/r1")).toBe(true);
+    expect(isAllowedProxyRequest("POST", "/api/llm-wiki/projects/p1/reviews/resolve")).toBe(true);
   });
 
   it("rejects unsupported methods and paths", () => {
@@ -120,9 +123,9 @@ describe("proxy allowlist", () => {
     expect(isAllowedProxyRequest("POST", "/api/llm-wiki/projects/p1/files/content")).toBe(false);
     expect(isAllowedProxyRequest("GET", "/api/llm-wiki/projects/p1/settings")).toBe(false);
     expect(isAllowedProxyRequest("GET", "/api/llm-wiki/projects/p1/graph/full")).toBe(false);
-    expect(isAllowedProxyRequest("POST", "/api/llm-wiki/projects/p1/chat/s1/cancel")).toBe(false);
-    expect(isAllowedProxyRequest("PATCH", "/api/llm-wiki/projects/p1/reviews/r1")).toBe(false);
-    expect(isAllowedProxyRequest("POST", "/api/llm-wiki/projects/p1/reviews/resolve")).toBe(false);
+    expect(isAllowedProxyRequest("GET", "/api/llm-wiki/projects/p1/chat/s1/cancel")).toBe(false);
+    expect(isAllowedProxyRequest("PATCH", "/api/llm-wiki/projects/p1/settings")).toBe(false);
+    expect(isAllowedProxyRequest("POST", "/api/llm-wiki/projects/p1/reviews/r1")).toBe(false);
   });
 });
 
@@ -256,6 +259,36 @@ describe("proxy security", () => {
     });
     expect(response.status).toBe(400);
     expect(response.body).toBe("Bad request");
+  });
+
+  it("allows large chat bodies without raising the global proxy body limit", async () => {
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const largeBody = JSON.stringify({ message: "x".repeat(1024 * 1024 + 10) });
+
+    const chat = await localRequest("/api/llm-wiki/projects/p1/chat", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer webui-test-token",
+        "content-type": "application/json",
+      },
+      body: largeBody,
+    });
+    expect(chat.status).toBe(200);
+
+    const search = await localRequest("/api/llm-wiki/projects/p1/search", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer webui-test-token",
+        "content-type": "application/json",
+      },
+      body: largeBody,
+    });
+    expect(search.status).toBe(413);
   });
 
   it("builds the WebUI full graph endpoint from native files and content APIs", async () => {

@@ -75,7 +75,10 @@
     "eyebrow": "共享后端检索",
     "heading": "搜索 Wiki 页面",
     "placeholder": "搜索 Wiki 页面...",
-    "score": "得分 {{score}}"
+    "score": "得分 {{score}}",
+    "includeContent": "包含全文内容",
+    "mode": "模式：{{mode}}",
+    "hitStats": "关键词命中：{{token}} · 向量命中：{{vector}}"
   },
   "graph": {
     "title": "知识图谱",
@@ -146,7 +149,45 @@
     "summary": "来自原生审阅状态的 {{count}} 个项目",
     "unresolved": "未解决",
     "resolved": "已解决",
-    "all": "全部"
+    "all": "全部",
+    "updating": "正在更新审阅状态...",
+    "selectAllPending": "选择全部未解决项",
+    "selectItem": "选择审阅项",
+    "resolveSelected": "解决已选（{{count}}）",
+    "resolve": "解决",
+    "reopen": "重新打开",
+    "skip": "跳过",
+    "nativeOptions": "原生选项："
+  },
+  "chat": {
+    "title": "对话",
+    "eyebrow": "LLM Wiki Agent",
+    "heading": "询问当前项目",
+    "newChat": "新对话",
+    "session": "会话",
+    "streaming": "流式",
+    "nonStreaming": "非流式",
+    "unavailable": "原生 LLM Wiki API 未报告 Agent Chat 可用。请先更新或启用原生 API。",
+    "emptyTitle": "开始项目对话",
+    "emptyBody": "可以询问 Wiki 页面、知识关系或原生 API 暴露的资料内容。",
+    "thinking": "正在思考...",
+    "mode": "模式",
+    "modes": {
+      "fast": "快速",
+      "standard": "标准",
+      "deep": "深度",
+      "localFirst": "本地优先"
+    },
+    "wiki": "Wiki",
+    "web": "联网",
+    "anytxt": "AnyTXT",
+    "placeholder": "询问 LLM Wiki... Enter 发送，Shift+Enter 换行。",
+    "references": "引用",
+    "usage": "提示 {{prompt}} · 回复 {{completion}} · 引用 {{references}}",
+    "tooManyImages": "最多附加 {{max}} 张图片。",
+    "unsupportedImageType": "不支持的图片类型：{{type}}。",
+    "imageTooLarge": "{{name}} 超过 {{max}} MB。",
+    "imageHint": "图片支持 PNG/JPEG/WebP/GIF，单张不超过 {{max}} MB，每条消息最多 {{count}} 张。"
   },
   "lint": {
     "title": "Wiki 检查",
@@ -207,6 +248,9 @@
     "apiStatus": "API 状态",
     "apiEnabled": "API 已启用",
     "authRequired": "需要鉴权",
+    "lanAccess": "局域网访问",
+    "agentChat": "Agent 对话",
+    "agentStreaming": "Agent 流式",
     "tokenSource": "Token 来源",
     "proxyEnvBrowser": "代理/env/浏览器",
     "currentProject": "当前项目",
@@ -221,6 +265,9 @@
     "sourceFiles": "原始资料文件",
     "graphNodes": "图谱节点",
     "reviewItems": "待审阅项目",
+    "lanAccess": "局域网访问",
+    "agentChat": "Agent 对话",
+    "agentStreaming": "Agent 流式",
     "notice": "这个 WebUI 是非侵入式的。所有项目数据都来自原生 LLM Wiki HTTP API 或 Docker 代理。"
   }
 }

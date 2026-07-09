@@ -75,7 +75,10 @@
     "eyebrow": "Shared backend retrieval",
     "heading": "Search wiki pages",
     "placeholder": "Search wiki pages...",
-    "score": "score {{score}}"
+    "score": "score {{score}}",
+    "includeContent": "Include full content",
+    "mode": "Mode: {{mode}}",
+    "hitStats": "Token hits: {{token}} · Vector hits: {{vector}}"
   },
   "graph": {
     "title": "Knowledge Graph",
@@ -146,7 +149,45 @@
     "summary": "{{count}} items from native review state",
     "unresolved": "Unresolved",
     "resolved": "Resolved",
-    "all": "All"
+    "all": "All",
+    "updating": "Updating review state...",
+    "selectAllPending": "Select all unresolved items",
+    "selectItem": "Select review item",
+    "resolveSelected": "Resolve selected ({{count}})",
+    "resolve": "Resolve",
+    "reopen": "Reopen",
+    "skip": "Skip",
+    "nativeOptions": "Native options:"
+  },
+  "chat": {
+    "title": "Chat",
+    "eyebrow": "LLM Wiki Agent",
+    "heading": "Ask this project",
+    "newChat": "New chat",
+    "session": "Session",
+    "streaming": "Streaming",
+    "nonStreaming": "Non-streaming",
+    "unavailable": "The native LLM Wiki API does not report Agent Chat support. Update or enable the native API first.",
+    "emptyTitle": "Start a project chat",
+    "emptyBody": "Ask about wiki pages, relationships, or source material exposed by the native API.",
+    "thinking": "Thinking...",
+    "mode": "Mode",
+    "modes": {
+      "fast": "Fast",
+      "standard": "Standard",
+      "deep": "Deep",
+      "localFirst": "Local first"
+    },
+    "wiki": "Wiki",
+    "web": "Web",
+    "anytxt": "AnyTXT",
+    "placeholder": "Ask LLM Wiki... Enter to send, Shift+Enter for a new line.",
+    "references": "References",
+    "usage": "prompt {{prompt}} · completion {{completion}} · refs {{references}}",
+    "tooManyImages": "Attach at most {{max}} images.",
+    "unsupportedImageType": "Unsupported image type: {{type}}.",
+    "imageTooLarge": "{{name}} is larger than {{max}} MB.",
+    "imageHint": "Images: PNG/JPEG/WebP/GIF, up to {{max}} MB each and {{count}} per message."
   },
   "lint": {
     "title": "Wiki Lint",
@@ -207,6 +248,9 @@
     "apiStatus": "API status",
     "apiEnabled": "API enabled",
     "authRequired": "Auth required",
+    "lanAccess": "LAN access",
+    "agentChat": "Agent chat",
+    "agentStreaming": "Agent streaming",
     "tokenSource": "Token source",
     "proxyEnvBrowser": "proxy/env/browser",
     "currentProject": "Current project",
@@ -221,6 +265,9 @@
     "sourceFiles": "Source files",
     "graphNodes": "Graph nodes",
     "reviewItems": "Review items",
+    "lanAccess": "LAN access",
+    "agentChat": "Agent chat",
+    "agentStreaming": "Agent streaming",
     "notice": "This WebUI is intentionally non-invasive. All project data comes through the native LLM Wiki HTTP API or the Docker proxy."
   }
 }

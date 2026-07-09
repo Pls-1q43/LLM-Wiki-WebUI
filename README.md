@@ -19,7 +19,9 @@ Its main use case is making your LLM Wiki available across your LAN, and in sele
 - Markdown rendering with wiki-style links.
 - Search backed by the native LLM Wiki retrieval API.
 - Knowledge graph visualization modeled after the original LLM Wiki graph UI.
-- Review list, source rescan, API diagnostics, and read-only lint checks.
+- Agent Chat through the LLM Wiki 0.6 HTTP API, including image input, references, and cancel.
+- Review list with resolve/reopen/skip and bulk resolve state operations.
+- Source rescan, API diagnostics, and read-only lint checks.
 - Clear disabled states for native-only actions that the HTTP API does not expose yet.
 
 ## One-Line Docker Start
@@ -125,7 +127,7 @@ Useful scripts:
 
 This project is designed to follow the user experience of [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki) where the public HTTP API allows it. Some UI logic and visual patterns are adapted from the original GPLv3 project with attribution.
 
-Native-only or not-yet-designed WebUI capabilities remain disabled. Examples include project creation, source import/delete, wiki editing, auto-fix, and Deep Research orchestration; Chat is deferred for a separate design pass even though LLM Wiki 0.6 exposes a non-streaming API.
+Native-only or not-yet-designed WebUI capabilities remain disabled. Examples include project creation, source import/delete, wiki editing, auto-fix, and Deep Research orchestration. Review actions in this WebUI only update review state; they do not execute native WebView side effects such as creating pages.
 
 LLM Wiki WebUI follows the upstream project license: GNU General Public License v3.0. See [NOTICE](NOTICE) for attribution and [LICENSE](LICENSE) for licensing.
 
@@ -148,7 +150,9 @@ LLM Wiki WebUI 是原生桌面应用 [nashsu/llm_wiki](https://github.com/nashsu
 - 渲染 Markdown，并支持 Wiki 风格链接。
 - 使用原生 LLM Wiki 检索 API 进行搜索。
 - 知识图谱视图尽量对齐原始 LLM Wiki 的图谱体验。
-- 支持待审阅列表、资料重新扫描、API 诊断、只读 Wiki 检查。
+- 通过 LLM Wiki 0.6 HTTP API 使用 Agent 对话，支持图片输入、引用与取消生成。
+- 待审阅列表支持解决、重新打开、跳过与批量解决状态操作。
+- 支持资料重新扫描、API 诊断、只读 Wiki 检查。
 - 对 HTTP API 尚未暴露的原生功能展示明确的禁用状态。
 
 ## Docker 一行启动
@@ -254,6 +258,6 @@ WEBUI_ACCESS_TOKEN=请改成你的-webui-token LLM_WIKI_API_BASE_URL=http://127.
 
 本项目会在 HTTP API 能力允许的范围内，尽量对齐 [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki) 的使用体验。部分 UI 逻辑、视觉模式和 Logo 资源来自原 GPLv3 项目，并保留署名。
 
-原生专属或 WebUI 尚未完成设计的能力会保持禁用。例如：新建项目、资料导入/删除、Wiki 编辑、自动修复、Deep Research 编排等；Chat 虽然已在 LLM Wiki 0.6 暴露非流式 API，但会作为独立设计任务另行规划。
+原生专属或 WebUI 尚未完成设计的能力会保持禁用。例如：新建项目、资料导入/删除、Wiki 编辑、自动修复、Deep Research 编排等。WebUI 中的待审阅操作只更新 review 状态，不会执行原生 WebView 里的创建页面等副作用。
 
 LLM Wiki WebUI 跟随主项目协议，使用 GNU General Public License v3.0。署名见 [NOTICE](NOTICE)，许可见 [LICENSE](LICENSE)。
