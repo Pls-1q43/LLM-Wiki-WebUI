@@ -1,4 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ClipboardEvent,
+  type FormEvent,
+  type MouseEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+} from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -12,23 +24,36 @@ import {
   ChevronDown,
   ChevronRight,
   CircleSlash,
+  Clock3,
+  Download,
   FileSearch,
   FileText,
   FolderOpen,
+  Globe2,
   GitBranch,
+  ImagePlus,
   Layers,
   Loader2,
   Menu,
   MessageSquare,
   MoreHorizontal,
+  Pencil,
   RefreshCw,
   Search,
+  Send,
   Server,
   Settings,
+  Square,
   Tag,
+  Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import {
+  ApiChatImage,
+  ApiChatMode,
+  ApiChatReference,
+  ApiChatToolEvent,
   ApiFileNode,
   ApiGraphEdge,
   ApiGraphNode,
@@ -41,8 +66,33 @@ import {
 } from "./lib/api-client";
 import { GraphView } from "./components/GraphView";
 import { unsupportedFeatures } from "./lib/feature-support";
+import {
+  ACCEPTED_IMAGE_TYPES,
+  MAX_IMAGE_BYTES,
+  MAX_IMAGE_MB,
+  MAX_IMAGES_PER_MESSAGE,
+  chatImageToDataUrl,
+  fileToChatImage,
+  isAcceptedImageType,
+} from "./lib/chat-image-utils";
+import {
+  chatHistoryExportFilename,
+  deleteChatHistoryEntry,
+  exportChatHistoryMarkdown,
+  importChatHistoryExport,
+  loadStoredChat,
+  parseChatHistoryMarkdown,
+  renameChatHistoryEntry,
+  saveStoredChat,
+  scanChatHistory,
+  upsertChatHistoryEntry,
+  type ChatHistoryEntry,
+  type ChatHistoryMessage,
+  type ChatHistoryRole,
+} from "./lib/chat-history";
 import { collectMarkdownFiles } from "./lib/full-graph";
 import { flattenFiles, lintReadOnly, type LintIssue } from "./lib/lint";
+import { normalizeWikiTarget, resolveWikiTarget, transformWikilinks } from "./lib/wiki-links";
 
 type View = "wiki" | "sources" | "search" | "graph" | "review" | "lint" | "chat" | "settings";
 type RootMode = "wiki" | "sources" | "all";
@@ -52,7 +102,11 @@ type AppUrlParams = {
   path?: string | null;
   q?: string;
   review?: ApiReviewStatus;
+  chatSession?: string | null;
 };
+
+type WebuiChatMessage = ChatHistoryMessage;
+type ChatRole = ChatHistoryRole;
 
 const APP_DISPLAY_NAME = "LLM Wiki WebUI";
 
@@ -90,6 +144,7 @@ function readUrlParams(): AppUrlParams {
     path: params.get("path") || null,
     q: params.get("q") || "",
     review: isReviewStatus(review) ? review : undefined,
+    chatSession: params.get("chatSession") || undefined,
   };
 }
 
@@ -107,6 +162,8 @@ function appHref(params: AppUrlParams): string {
   else next.delete("q");
   if (params.review && params.review !== "unresolved") next.set("review", params.review);
   else next.delete("review");
+  if (params.view === "chat" && params.chatSession) next.set("chatSession", params.chatSession);
+  else if (params.chatSession === null || params.view !== "chat") next.delete("chatSession");
   if (params.view && params.view !== "graph") {
     for (const key of ["color", "node", "hideStructural", "hideIsolated", "maxLinks", "types"]) {
       next.delete(key);
@@ -115,6 +172,18 @@ function appHref(params: AppUrlParams): string {
   url.search = next.toString();
   url.hash = "";
   return `${url.pathname}${url.search}`;
+}
+
+function newChatSessionId() {
+  return `webui_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function newMessageId() {
+  return `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function canUseNativeChat(health: ApiHealth | null) {
+  return health?.agent && health.agent.chat === true;
 }
 
 function shouldHandleInApp(event: MouseEvent<HTMLElement>) {
@@ -245,49 +314,6 @@ function parseMarkdownFrontmatter(content: string): ParsedMarkdown {
   return { frontmatter, body: content.slice(match[0].length) };
 }
 
-const WIKILINK_RE = /\[\[([^\]|\n]+)(?:\|([^\]\n]*))?\]\]/g;
-
-function transformWikilinks(body: string): string {
-  if (!body.includes("[[")) return body;
-  return body
-    .split(/(```[\s\S]*?```)/g)
-    .map((part, index) => {
-      if (index % 2 === 1) return part;
-      return part
-        .split(/(`[^`\n]+`)/g)
-        .map((inline, inlineIndex) => {
-          if (inlineIndex % 2 === 1) return inline;
-          return inline.replace(WIKILINK_RE, (_match, rawTarget: string, rawAlias?: string) => {
-            const target = rawTarget.trim();
-            const label = (rawAlias?.trim() || target).replace(/\[/g, "\\[").replace(/\]/g, "\\]");
-            return `[${label}](#${encodeURIComponent(target)})`;
-          });
-        })
-        .join("");
-    })
-    .join("");
-}
-
-function normalizeWikiTarget(value: string) {
-  return value
-    .replace(/\.md$/i, "")
-    .split("/")
-    .pop()!
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-");
-}
-
-function resolveWikiTarget(target: string, files: ApiFileNode[]) {
-  const flat = flattenFiles(files).filter((node) => !node.isDir && node.path.endsWith(".md"));
-  const normalized = normalizeWikiTarget(target);
-  return (
-    flat.find((node) => node.path === target || node.path === `wiki/${target}`)?.path ??
-    flat.find((node) => normalizeWikiTarget(node.path) === normalized)?.path ??
-    null
-  );
-}
-
 function unwrapWikiValue(value: string) {
   const trimmed = value.trim();
   const match = trimmed.match(/^\[\[([^\]|]+)(?:\|([^\]]+))?\]\]$/);
@@ -318,6 +344,8 @@ export function App() {
   const [fileContent, setFileContent] = useState("");
   const [searchQuery, setSearchQuery] = useState(initialUrlParams.q ?? "");
   const [searchResults, setSearchResults] = useState<ApiSearchResult[]>([]);
+  const [searchMeta, setSearchMeta] = useState<{ mode?: string; tokenHits?: number; vectorHits?: number }>({});
+  const [searchIncludeContent, setSearchIncludeContent] = useState(false);
   const [graphNodes, setGraphNodes] = useState<ApiGraphNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<ApiGraphEdge[]>([]);
   const [reviews, setReviews] = useState<ApiReviewItem[]>([]);
@@ -326,12 +354,23 @@ export function App() {
   const [loading, setLoading] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [rescanMessage, setRescanMessage] = useState<string | null>(null);
+  const [chatSessionId, setChatSessionId] = useState(initialUrlParams.chatSession ?? newChatSessionId);
+  const [chatMessages, setChatMessages] = useState<WebuiChatMessage[]>([]);
+  const [chatMode, setChatMode] = useState<ApiChatMode>("standard");
+  const [chatUseWeb, setChatUseWeb] = useState(false);
+  const [chatUseAnyTxt, setChatUseAnyTxt] = useState(false);
+  const [chatSending, setChatSending] = useState(false);
+  const [chatHistory, setChatHistory] = useState<ChatHistoryEntry[]>([]);
+  const [isChatHistoryOpen, setIsChatHistoryOpen] = useState(false);
+  const [chatHistoryImportMessage, setChatHistoryImportMessage] = useState("");
   const isMobile = useMediaQuery("(max-width: 860px)");
   const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
   const [isMobileMoreOpen, setIsMobileMoreOpen] = useState(false);
   const workspaceTriggerRef = useRef<HTMLButtonElement>(null);
   const workspaceCloseRef = useRef<HTMLButtonElement>(null);
   const fullGraphBuildKeyRef = useRef("");
+  const chatAbortRef = useRef<AbortController | null>(null);
+  const skipNextChatSaveRef = useRef(false);
 
   const selectedProject = useMemo(
     () =>
@@ -352,8 +391,9 @@ export function App() {
         path: params.path === undefined ? selectedFile : params.path,
         q: params.q === undefined ? searchQuery : params.q,
         review: params.review ?? reviewStatus,
+        chatSession: params.chatSession === undefined ? chatSessionId : params.chatSession,
       }),
-    [activeView, reviewStatus, searchQuery, selectedFile, selectedProject?.id, selectedProjectId],
+    [activeView, chatSessionId, reviewStatus, searchQuery, selectedFile, selectedProject?.id, selectedProjectId],
   );
 
   const refreshHealth = useCallback(async () => {
@@ -378,6 +418,27 @@ export function App() {
     const value = await client.files(id, { root, recursive: true });
     return value.files;
   }, []);
+
+  const refreshReviews = useCallback(
+    async (id: string) => {
+      const value = await client.reviews(id, { status: reviewStatus, limit: 200 });
+      setReviews(value.reviews);
+      return value.reviews;
+    },
+    [reviewStatus],
+  );
+
+  const refreshChatHistory = useCallback((projectId = selectedProject?.id ?? selectedProjectId) => {
+    if (!projectId) return [];
+    try {
+      const entries = scanChatHistory(window.localStorage, projectId);
+      setChatHistory(entries);
+      return entries;
+    } catch {
+      setChatHistory([]);
+      return [];
+    }
+  }, [selectedProject?.id, selectedProjectId]);
 
   const loadProjectData = useCallback(
     async (id: string) => {
@@ -430,6 +491,30 @@ export function App() {
       setError(err instanceof Error ? err.message : String(err));
     });
   }, [selectedProject?.id, reviewStatus]);
+
+  useEffect(() => {
+    if (!selectedProject) return;
+    skipNextChatSaveRef.current = true;
+    setChatMessages(loadStoredChat(window.localStorage, selectedProject.id, chatSessionId));
+  }, [chatSessionId, selectedProject?.id]);
+
+  useEffect(() => {
+    if (!selectedProject) return;
+    if (skipNextChatSaveRef.current) {
+      skipNextChatSaveRef.current = false;
+      return;
+    }
+    try {
+      saveStoredChat(window.localStorage, selectedProject.id, chatSessionId, chatMessages);
+      setChatHistory(upsertChatHistoryEntry(window.localStorage, selectedProject.id, chatSessionId, chatMessages));
+    } catch {
+      // Browser storage can be full or disabled; chat still works for the current page session.
+    }
+  }, [chatMessages, chatSessionId, selectedProject?.id]);
+
+  useEffect(() => {
+    refreshChatHistory(selectedProject?.id);
+  }, [refreshChatHistory, selectedProject?.id]);
 
   useEffect(() => {
     if (activeView !== "graph" || !selectedProject || files.length === 0) return;
@@ -486,10 +571,11 @@ export function App() {
       path: selectedFile,
       q: searchQuery,
       review: reviewStatus,
+      chatSession: chatSessionId,
     });
     const current = `${window.location.pathname}${window.location.search}`;
     if (next !== current) window.history.replaceState(null, "", next);
-  }, [activeView, reviewStatus, searchQuery, selectedFile, selectedProject?.id, selectedProjectId]);
+  }, [activeView, chatSessionId, reviewStatus, searchQuery, selectedFile, selectedProject?.id, selectedProjectId]);
 
   useEffect(() => {
     function handlePopState() {
@@ -499,6 +585,7 @@ export function App() {
       setSelectedFile(params.path ?? null);
       setSearchQuery(params.q ?? "");
       setReviewStatus(params.review ?? "unresolved");
+      setChatSessionId(params.chatSession ?? newChatSessionId());
     }
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
@@ -511,15 +598,16 @@ export function App() {
     try {
       const value = await client.search(selectedProject.id, searchQuery, {
         topK: 12,
-        includeContent: false,
+        includeContent: searchIncludeContent,
       });
       setSearchResults(value.results);
+      setSearchMeta({ mode: value.mode, tokenHits: value.tokenHits, vectorHits: value.vectorHits });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading("");
     }
-  }, [searchQuery, selectedProject, t]);
+  }, [searchIncludeContent, searchQuery, selectedProject, t]);
 
   useEffect(() => {
     if (activeView !== "search" || !searchQuery.trim()) return;
@@ -573,6 +661,216 @@ export function App() {
     }
   }, [refreshFiles, selectedProject, t]);
 
+  const startNewChat = useCallback(() => {
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = null;
+    setChatSending(false);
+    setChatSessionId(newChatSessionId());
+    setChatMessages([]);
+    setActiveView("chat");
+  }, []);
+
+  const openChatHistory = useCallback(() => {
+    refreshChatHistory();
+    setChatHistoryImportMessage("");
+    setIsChatHistoryOpen(true);
+  }, [refreshChatHistory]);
+
+  const closeChatHistory = useCallback(() => {
+    setIsChatHistoryOpen(false);
+  }, []);
+
+  const selectChatHistory = useCallback((sessionId: string) => {
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = null;
+    setChatSending(false);
+    setChatSessionId(sessionId);
+    setActiveView("chat");
+    setIsChatHistoryOpen(false);
+  }, []);
+
+  const renameChatHistory = useCallback(
+    (sessionId: string, title: string) => {
+      if (!selectedProject) return;
+      try {
+        setChatHistory(renameChatHistoryEntry(window.localStorage, selectedProject.id, sessionId, title));
+      } catch {
+        setError(t("chat.historyStorageError"));
+      }
+    },
+    [selectedProject, t],
+  );
+
+  const deleteChatHistory = useCallback(
+    (sessionId: string) => {
+      if (!selectedProject) return;
+      try {
+        const entries = deleteChatHistoryEntry(window.localStorage, selectedProject.id, sessionId);
+        setChatHistory(entries);
+        if (sessionId === chatSessionId) {
+          setChatSessionId(newChatSessionId());
+          setChatMessages([]);
+        }
+      } catch {
+        setError(t("chat.historyStorageError"));
+      }
+    },
+    [chatSessionId, selectedProject, t],
+  );
+
+  const exportChatHistory = useCallback(
+    (entry: ChatHistoryEntry) => {
+      if (!selectedProject) return;
+      const messages = loadStoredChat(window.localStorage, selectedProject.id, entry.sessionId);
+      const markdown = exportChatHistoryMarkdown(selectedProject.id, entry, messages);
+      const url = URL.createObjectURL(new Blob([markdown], { type: "text/markdown;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = chatHistoryExportFilename(entry);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    },
+    [selectedProject],
+  );
+
+  const importChatHistoryFiles = useCallback(
+    async (files: File[]) => {
+      const projectId = selectedProject?.id ?? selectedProjectId;
+      if (!projectId || files.length === 0) return;
+      let imported = 0;
+      let skipped = 0;
+      let conflicts = 0;
+      for (const file of files) {
+        try {
+          const parsed = parseChatHistoryMarkdown(await file.text());
+          const result = importChatHistoryExport(window.localStorage, projectId, parsed, newChatSessionId);
+          imported += 1;
+          if (result.conflict) conflicts += 1;
+        } catch {
+          skipped += 1;
+        }
+      }
+      setChatHistory(scanChatHistory(window.localStorage, projectId));
+      setChatHistoryImportMessage(t("chat.historyImportResult", { imported, skipped, conflicts }));
+    },
+    [selectedProject?.id, selectedProjectId, t],
+  );
+
+  const sendChatMessage = useCallback(
+    async (content: string, images: ApiChatImage[]) => {
+      if (!selectedProject || chatSending) return;
+      const trimmed = content.trim();
+      if (!trimmed && images.length === 0) return;
+      const userMessage: WebuiChatMessage = {
+        id: newMessageId(),
+        role: "user",
+        content: trimmed,
+        images,
+      };
+      const history = chatMessages
+        .filter((message) => message.role === "user" || message.role === "assistant")
+        .slice(-12)
+        .map((message) => ({ role: message.role, content: message.content }));
+      const controller = new AbortController();
+      chatAbortRef.current = controller;
+      setChatSending(true);
+      setError(null);
+      setChatMessages((current) => [...current, userMessage]);
+      try {
+        const response = await client.chat(selectedProject.id, trimmed, {
+          sessionId: chatSessionId,
+          mode: chatMode,
+          wiki: true,
+          web: chatUseWeb,
+          anytxt: chatUseAnyTxt,
+          includeContent: false,
+          images,
+          history,
+          historyExplicit: history.length > 0,
+          persistSession: true,
+          signal: controller.signal,
+        });
+        if (response.sessionId && response.sessionId !== chatSessionId) {
+          setChatSessionId(response.sessionId);
+        }
+        setChatMessages((current) => [
+          ...current,
+          {
+            id: newMessageId(),
+            role: "assistant",
+            content: response.message.content,
+            references: response.references,
+            toolEvents: response.toolEvents,
+            usage: response.usage,
+          },
+        ]);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : String(err));
+        setChatMessages((current) => [
+          ...current,
+          {
+            id: newMessageId(),
+            role: "system",
+            content: err instanceof Error ? err.message : String(err),
+          },
+        ]);
+      } finally {
+        if (chatAbortRef.current === controller) chatAbortRef.current = null;
+        setChatSending(false);
+      }
+    },
+    [chatMessages, chatMode, chatSending, chatSessionId, chatUseAnyTxt, chatUseWeb, selectedProject],
+  );
+
+  const cancelChat = useCallback(async () => {
+    if (!selectedProject) return;
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = null;
+    setChatSending(false);
+    try {
+      await client.cancelChat(selectedProject.id, chatSessionId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [chatSessionId, selectedProject]);
+
+  const patchReview = useCallback(
+    async (reviewId: string, resolved: boolean, action?: string) => {
+      if (!selectedProject) return;
+      setLoading(t("review.updating"));
+      setError(null);
+      try {
+        await client.patchReview(selectedProject.id, reviewId, { resolved, action });
+        await refreshReviews(selectedProject.id);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoading("");
+      }
+    },
+    [refreshReviews, selectedProject, t],
+  );
+
+  const bulkResolveReviews = useCallback(
+    async (ids: string[]) => {
+      if (!selectedProject || ids.length === 0) return;
+      setLoading(t("review.updating"));
+      setError(null);
+      try {
+        await client.bulkResolveReviews(selectedProject.id, ids, "Resolved in WebUI");
+        await refreshReviews(selectedProject.id);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoading("");
+      }
+    },
+    [refreshReviews, selectedProject, t],
+  );
+
   const openPath = useCallback(
     (path: string, view: View = "wiki") => {
       setSelectedFile(path);
@@ -624,7 +922,7 @@ export function App() {
       if (activeView === "review") return t("review.title");
       if (activeView === "lint") return t("lint.title");
       if (activeView === "settings") return t("nav.settings");
-      if (activeView === "chat") return t("unsupported.chatTitle");
+      if (activeView === "chat") return t("chat.title");
       const item = navItems.find((navItem) => navItem.id === activeView);
       return item ? t(item.labelKey) : t("app.title");
     })();
@@ -742,6 +1040,9 @@ export function App() {
             query={searchQuery}
             setQuery={setSearchQuery}
             results={searchResults}
+            meta={searchMeta}
+            includeContent={searchIncludeContent}
+            setIncludeContent={setSearchIncludeContent}
             onSearch={runSearch}
             onOpen={(path) => openPath(path, "wiki")}
             makeHref={makeHref}
@@ -765,12 +1066,45 @@ export function App() {
             setStatus={setReviewStatus}
             onOpen={(path) => openPath(path, "wiki")}
             makeHref={makeHref}
+            onPatch={patchReview}
+            onBulkResolve={bulkResolveReviews}
           />
         )}
         {activeView === "lint" && (
           <LintView issues={lintIssues} onRun={runLint} makeHref={makeHref} onOpen={(path) => openPath(path, "wiki")} />
         )}
-        {activeView === "chat" && <UnsupportedView title={t("unsupported.chatTitle")} />}
+        {activeView === "chat" && (
+          <ChatView
+            health={health}
+            messages={chatMessages}
+            files={files}
+            projectName={selectedProject?.name || selectedProject?.id || selectedProjectId}
+            mode={chatMode}
+            setMode={setChatMode}
+            useWeb={chatUseWeb}
+            setUseWeb={setChatUseWeb}
+            useAnyTxt={chatUseAnyTxt}
+            setUseAnyTxt={setChatUseAnyTxt}
+            sending={chatSending}
+            sessionId={chatSessionId}
+            historyEntries={chatHistory}
+            historyOpen={isChatHistoryOpen}
+            historyImportMessage={chatHistoryImportMessage}
+            onNewChat={startNewChat}
+            onOpenHistory={openChatHistory}
+            onCloseHistory={closeChatHistory}
+            onSelectHistory={selectChatHistory}
+            onRenameHistory={renameChatHistory}
+            onDeleteHistory={deleteChatHistory}
+            onExportHistory={exportChatHistory}
+            onImportHistory={importChatHistoryFiles}
+            onSend={sendChatMessage}
+            onCancel={cancelChat}
+            onOpenWiki={(path) => openPath(path, "wiki")}
+            onOpenSource={(path) => openPath(path, "sources")}
+            makeHref={makeHref}
+          />
+        )}
         {activeView === "settings" && (
           <SettingsView
             health={health}
@@ -1586,6 +1920,9 @@ function SearchView({
   query,
   setQuery,
   results,
+  meta,
+  includeContent,
+  setIncludeContent,
   onSearch,
   onOpen,
   makeHref,
@@ -1593,6 +1930,9 @@ function SearchView({
   query: string;
   setQuery: (query: string) => void;
   results: ApiSearchResult[];
+  meta: { mode?: string; tokenHits?: number; vectorHits?: number };
+  includeContent: boolean;
+  setIncludeContent: (value: boolean) => void;
   onSearch: () => void;
   onOpen: (path: string) => void;
   makeHref: (params: AppUrlParams) => string;
@@ -1606,6 +1946,18 @@ function SearchView({
           <h2>{t("search.heading")}</h2>
         </div>
       </header>
+      <div className="search-meta-row">
+        <label>
+          <input
+            type="checkbox"
+            checked={includeContent}
+            onChange={(event) => setIncludeContent(event.target.checked)}
+          />
+          {t("search.includeContent")}
+        </label>
+        <span>{t("search.mode", { mode: meta.mode ?? t("common.unknown") })}</span>
+        <span>{t("search.hitStats", { token: meta.tokenHits ?? 0, vector: meta.vectorHits ?? 0 })}</span>
+      </div>
       <form
         className="search-row"
         onSubmit={(event) => {
@@ -1653,14 +2005,32 @@ function ReviewView({
   setStatus,
   onOpen,
   makeHref,
+  onPatch,
+  onBulkResolve,
 }: {
   reviews: ApiReviewItem[];
   status: ApiReviewStatus;
   setStatus: (status: ApiReviewStatus) => void;
   onOpen: (path: string) => void;
   makeHref: (params: AppUrlParams) => string;
+  onPatch: (reviewId: string, resolved: boolean, action?: string) => Promise<void>;
+  onBulkResolve: (ids: string[]) => Promise<void>;
 }) {
   const { t } = useTranslation();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const unresolved = reviews.filter((item) => !item.resolved);
+  const selectedUnresolvedIds = unresolved.map((item) => item.id).filter((id) => selectedIds.has(id));
+  const allUnresolvedSelected = unresolved.length > 0 && selectedUnresolvedIds.length === unresolved.length;
+
+  function setSelected(id: string, selected: boolean) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (selected) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
   return (
     <article className="view-stack">
       <header className="reader-header">
@@ -1668,16 +2038,50 @@ function ReviewView({
           <p className="eyebrow">{t("review.title")}</p>
           <h2>{t("review.summary", { count: reviews.length })}</h2>
         </div>
-        <select className="select-input narrow" value={status} onChange={(event) => setStatus(event.target.value as ApiReviewStatus)}>
-          <option value="unresolved">{t("review.unresolved")}</option>
-          <option value="resolved">{t("review.resolved")}</option>
-          <option value="all">{t("review.all")}</option>
-        </select>
+        <div className="review-header-actions">
+          <select className="select-input narrow" value={status} onChange={(event) => setStatus(event.target.value as ApiReviewStatus)}>
+            <option value="unresolved">{t("review.unresolved")}</option>
+            <option value="resolved">{t("review.resolved")}</option>
+            <option value="all">{t("review.all")}</option>
+          </select>
+          <button
+            className="secondary-action"
+            type="button"
+            disabled={selectedUnresolvedIds.length === 0}
+            onClick={() => void onBulkResolve(selectedUnresolvedIds).then(() => setSelectedIds(new Set()))}
+          >
+            <CheckCircle2 size={17} />
+            {t("review.resolveSelected", { count: selectedUnresolvedIds.length })}
+          </button>
+        </div>
       </header>
       <div className="result-list">
+        {unresolved.length > 0 && (
+          <label className="review-select-all">
+            <input
+              type="checkbox"
+              checked={allUnresolvedSelected}
+              onChange={(event) => {
+                if (event.target.checked) setSelectedIds(new Set(unresolved.map((item) => item.id)));
+                else setSelectedIds(new Set());
+              }}
+            />
+            {t("review.selectAllPending")}
+          </label>
+        )}
         {reviews.map((item) => (
           <section className="review-row" key={item.id || item.title}>
-            <strong>{item.title || item.type}</strong>
+            <div className="review-title-row">
+              {!item.resolved && (
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(item.id)}
+                  aria-label={t("review.selectItem")}
+                  onChange={(event) => setSelected(item.id, event.target.checked)}
+                />
+              )}
+              <strong>{item.title || item.type}</strong>
+            </div>
             <p>{item.description}</p>
             {item.sourcePath && (
               <a
@@ -1695,11 +2099,705 @@ function ReviewView({
             <div className="chip-row">
               <span>{item.type || t("review.title")}</span>
               <span>{item.resolved ? t("common.resolved") : t("common.unresolved")}</span>
+              {item.resolvedAction && <span>{item.resolvedAction}</span>}
+            </div>
+            {item.options.length > 0 && (
+              <div className="review-options-note">
+                {t("review.nativeOptions")} {item.options.map((option) => option.label).join(", ")}
+              </div>
+            )}
+            <div className="review-actions">
+              {item.resolved ? (
+                <button className="secondary-action" type="button" onClick={() => void onPatch(item.id, false)}>
+                  <RefreshCw size={16} />
+                  {t("review.reopen")}
+                </button>
+              ) : (
+                <>
+                  <button className="primary-action" type="button" onClick={() => void onPatch(item.id, true, "Resolved in WebUI")}>
+                    <CheckCircle2 size={16} />
+                    {t("review.resolve")}
+                  </button>
+                  <button className="secondary-action" type="button" onClick={() => void onPatch(item.id, true, "Skip")}>
+                    <X size={16} />
+                    {t("review.skip")}
+                  </button>
+                </>
+              )}
             </div>
           </section>
         ))}
       </div>
     </article>
+  );
+}
+
+function ChatView({
+  health,
+  messages,
+  files,
+  projectName,
+  mode,
+  setMode,
+  useWeb,
+  setUseWeb,
+  useAnyTxt,
+  setUseAnyTxt,
+  sending,
+  sessionId,
+  historyEntries,
+  historyOpen,
+  historyImportMessage,
+  onNewChat,
+  onOpenHistory,
+  onCloseHistory,
+  onSelectHistory,
+  onRenameHistory,
+  onDeleteHistory,
+  onExportHistory,
+  onImportHistory,
+  onSend,
+  onCancel,
+  onOpenWiki,
+  onOpenSource,
+  makeHref,
+}: {
+  health: ApiHealth | null;
+  messages: WebuiChatMessage[];
+  files: ApiFileNode[];
+  projectName: string;
+  mode: ApiChatMode;
+  setMode: (mode: ApiChatMode) => void;
+  useWeb: boolean;
+  setUseWeb: (value: boolean) => void;
+  useAnyTxt: boolean;
+  setUseAnyTxt: (value: boolean) => void;
+  sending: boolean;
+  sessionId: string;
+  historyEntries: ChatHistoryEntry[];
+  historyOpen: boolean;
+  historyImportMessage: string;
+  onNewChat: () => void;
+  onOpenHistory: () => void;
+  onCloseHistory: () => void;
+  onSelectHistory: (sessionId: string) => void;
+  onRenameHistory: (sessionId: string, title: string) => void;
+  onDeleteHistory: (sessionId: string) => void;
+  onExportHistory: (entry: ChatHistoryEntry) => void;
+  onImportHistory: (files: File[]) => Promise<void>;
+  onSend: (content: string, images: ApiChatImage[]) => Promise<void>;
+  onCancel: () => Promise<void>;
+  onOpenWiki: (path: string) => void;
+  onOpenSource: (path: string) => void;
+  makeHref: (params: AppUrlParams) => string;
+}) {
+  const { t } = useTranslation();
+  const chatAvailable = canUseNativeChat(health);
+
+  return (
+    <article className="chat-workbench">
+      <header className="chat-header">
+        <div className="chat-title-group">
+          <p className="eyebrow">{t("chat.eyebrow")}</p>
+          <h2>{t("chat.heading", { project: projectName })}</h2>
+          <div className="chat-session-meta" title={sessionId}>
+            <span>{t("chat.session")}</span>
+            <code>{sessionId}</code>
+          </div>
+        </div>
+        <div className="chat-header-actions">
+          <button className="secondary-action" type="button" onClick={onOpenHistory} aria-label={t("chat.openHistory")}>
+            <Clock3 size={17} />
+            <span>{t("chat.history")}</span>
+          </button>
+          <button className="secondary-action" type="button" onClick={onNewChat} aria-label={t("chat.newChat")}>
+            <MessageSquare size={17} />
+            <span>{t("chat.newChat")}</span>
+          </button>
+        </div>
+      </header>
+
+      {!chatAvailable && (
+        <div className="notice-box">{t("chat.unavailable")}</div>
+      )}
+
+      <div className="chat-messages" aria-live="polite" role="log">
+        {messages.length === 0 ? (
+          <EmptyState title={t("chat.emptyTitle")} body={t("chat.emptyBody")} />
+        ) : (
+          messages.map((message) => (
+            <ChatMessageBubble
+              key={message.id}
+              message={message}
+              files={files}
+              makeHref={makeHref}
+              onOpenWiki={onOpenWiki}
+              onOpenSource={onOpenSource}
+            />
+          ))
+        )}
+        {sending && (
+          <div className="chat-thinking">
+            <Loader2 className="spin" size={16} />
+            {t("chat.thinking")}
+          </div>
+        )}
+      </div>
+
+      <ChatComposer
+        disabled={!chatAvailable || sending}
+        mode={mode}
+        setMode={setMode}
+        useWeb={useWeb}
+        setUseWeb={setUseWeb}
+        useAnyTxt={useAnyTxt}
+        setUseAnyTxt={setUseAnyTxt}
+        sending={sending}
+        onSend={onSend}
+        onCancel={onCancel}
+      />
+      <ChatHistoryDrawer
+        entries={historyEntries}
+        currentSessionId={sessionId}
+        open={historyOpen}
+        importMessage={historyImportMessage}
+        onClose={onCloseHistory}
+        onSelect={onSelectHistory}
+        onRename={onRenameHistory}
+        onDelete={onDeleteHistory}
+        onExport={onExportHistory}
+        onImport={onImportHistory}
+      />
+    </article>
+  );
+}
+
+function ChatHistoryDrawer({
+  entries,
+  currentSessionId,
+  open,
+  importMessage,
+  onClose,
+  onSelect,
+  onRename,
+  onDelete,
+  onExport,
+  onImport,
+}: {
+  entries: ChatHistoryEntry[];
+  currentSessionId: string;
+  open: boolean;
+  importMessage: string;
+  onClose: () => void;
+  onSelect: (sessionId: string) => void;
+  onRename: (sessionId: string, title: string) => void;
+  onDelete: (sessionId: string) => void;
+  onExport: (entry: ChatHistoryEntry) => void;
+  onImport: (files: File[]) => Promise<void>;
+}) {
+  const { t, i18n } = useTranslation();
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [importing, setImporting] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        if (openMenuId || renameSessionId) {
+          setOpenMenuId(null);
+          setRenameSessionId(null);
+        } else {
+          onClose();
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, open, openMenuId, renameSessionId]);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".chat-history-menu-wrap")) return;
+      setOpenMenuId(null);
+    }
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [openMenuId]);
+
+  if (!open) return null;
+
+  const dateFormatter = new Intl.DateTimeFormat(i18n.language, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  function startRename(entry: ChatHistoryEntry) {
+    setOpenMenuId(null);
+    setRenameSessionId(entry.sessionId);
+    setRenameValue(entry.title);
+  }
+
+  function submitRename(event: FormEvent, entry: ChatHistoryEntry) {
+    event.preventDefault();
+    onRename(entry.sessionId, renameValue);
+    setRenameSessionId(null);
+  }
+
+  function deleteEntry(entry: ChatHistoryEntry) {
+    setOpenMenuId(null);
+    if (!window.confirm(t("chat.historyDeleteConfirm", { title: entry.title || entry.sessionId }))) return;
+    onDelete(entry.sessionId);
+  }
+
+  async function handleImport(files: FileList | null) {
+    const items = files ? Array.from(files) : [];
+    if (items.length === 0) return;
+    setImporting(true);
+    try {
+      await onImport(items);
+    } finally {
+      setImporting(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  }
+
+  return (
+    <div className="chat-history-layer" role="presentation">
+      <button className="chat-history-scrim" type="button" aria-label={t("chat.closeHistory")} onClick={onClose} />
+      <aside className="chat-history-drawer" aria-label={t("chat.history")}>
+        <header className="chat-history-header">
+          <div>
+            <p className="eyebrow">{t("chat.history")}</p>
+            <h3>{t("chat.historyTitle")}</h3>
+          </div>
+          <div className="chat-history-header-actions">
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".md,text/markdown,text/plain"
+              multiple
+              hidden
+              onChange={(event) => void handleImport(event.target.files)}
+            />
+            <button
+              className="secondary-action"
+              type="button"
+              disabled={importing}
+              onClick={() => importInputRef.current?.click()}
+              aria-label={t("chat.historyImport")}
+            >
+              <Upload size={17} />
+              <span>{importing ? t("chat.historyImporting") : t("chat.historyImport")}</span>
+            </button>
+            <button className="secondary-action icon-only" type="button" onClick={onClose} aria-label={t("chat.closeHistory")}>
+              <X size={17} />
+            </button>
+          </div>
+        </header>
+        <div className="chat-history-notice">{t("chat.historyLocalNotice")}</div>
+        {importMessage && <div className="chat-history-import-status">{importMessage}</div>}
+        <div className="chat-history-list">
+          {entries.length === 0 ? (
+            <EmptyState title={t("chat.historyEmptyTitle")} body={t("chat.historyEmptyBody")} />
+          ) : (
+            entries.map((entry) => {
+              const active = entry.sessionId === currentSessionId;
+              const renaming = renameSessionId === entry.sessionId;
+              return (
+                <section className={`chat-history-item${active ? " active" : ""}`} key={entry.sessionId}>
+                  {renaming ? (
+                    <form className="chat-history-rename" onSubmit={(event) => submitRename(event, entry)}>
+                      <input
+                        value={renameValue}
+                        onChange={(event) => setRenameValue(event.target.value)}
+                        aria-label={t("chat.historyRename")}
+                        autoFocus
+                      />
+                      <button className="primary-action" type="submit">{t("common.apply")}</button>
+                      <button className="secondary-action" type="button" onClick={() => setRenameSessionId(null)}>
+                        {t("common.cancel")}
+                      </button>
+                    </form>
+                  ) : (
+                    <>
+                      <button className="chat-history-main" type="button" onClick={() => onSelect(entry.sessionId)}>
+                        <strong>{entry.title || t("chat.historyUntitled")}</strong>
+                        <span>{entry.preview || entry.sessionId}</span>
+                        <em>
+                          {dateFormatter.format(new Date(entry.updatedAt))} · {t("chat.historyMessageCount", { count: entry.messageCount })}
+                        </em>
+                      </button>
+                      <div className="chat-history-menu-wrap">
+                        <button
+                          className="secondary-action icon-only"
+                          type="button"
+                          aria-label={t("chat.historyActions")}
+                          aria-expanded={openMenuId === entry.sessionId}
+                          onClick={() => setOpenMenuId((current) => current === entry.sessionId ? null : entry.sessionId)}
+                        >
+                          <MoreHorizontal size={17} />
+                        </button>
+                        {openMenuId === entry.sessionId && (
+                          <div className="chat-history-menu" role="menu">
+                            <button type="button" role="menuitem" onClick={() => startRename(entry)}>
+                              <Pencil size={15} />
+                              {t("chat.historyRename")}
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => { setOpenMenuId(null); onExport(entry); }}>
+                              <Download size={15} />
+                              {t("chat.historyExport")}
+                            </button>
+                            <button className="danger" type="button" role="menuitem" onClick={() => deleteEntry(entry)}>
+                              <Trash2 size={15} />
+                              {t("chat.historyDelete")}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </section>
+              );
+            })
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function ChatMessageBubble({
+  message,
+  files,
+  makeHref,
+  onOpenWiki,
+  onOpenSource,
+}: {
+  message: WebuiChatMessage;
+  files: ApiFileNode[];
+  makeHref: (params: AppUrlParams) => string;
+  onOpenWiki: (path: string) => void;
+  onOpenSource: (path: string) => void;
+}) {
+  const { t } = useTranslation();
+  const isUser = message.role === "user";
+  const markdownContent = useMemo(
+    () => (isUser || message.role === "system" ? message.content : transformWikilinks(message.content)),
+    [isUser, message.content, message.role],
+  );
+  return (
+    <section className={`chat-message ${message.role}`}>
+      <div className="chat-avatar">{isUser ? "U" : message.role === "system" ? "!" : "AI"}</div>
+      <div className="chat-message-body">
+        {message.images && message.images.length > 0 && (
+          <div className="chat-image-row">
+            {message.images.map((image, index) => (
+              <img key={`${image.mediaType}-${index}`} src={chatImageToDataUrl(image)} alt="" />
+            ))}
+          </div>
+        )}
+        {message.content && (
+          <div className="chat-markdown">
+            {isUser || message.role === "system" ? (
+              <p>{message.content}</p>
+            ) : (
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  a: ({ href, children, ...props }) => {
+                    const isWikilink = typeof href === "string" && href.startsWith("#");
+                    const rawTarget = isWikilink
+                      ? (() => {
+                          try {
+                            return decodeURIComponent(href.slice(1));
+                          } catch {
+                            return href.slice(1);
+                          }
+                        })()
+                      : "";
+                    const wikiPath = isWikilink ? resolveWikiTarget(rawTarget, files) : null;
+                    const linkHref = wikiPath ? makeHref({ view: "wiki", path: wikiPath }) : href;
+                    return (
+                      <a
+                        href={linkHref}
+                        className={isWikilink ? `wiki-link${wikiPath ? "" : " unresolved"}` : undefined}
+                        title={isWikilink && !wikiPath ? t("chat.unresolvedWikilink", { target: rawTarget }) : undefined}
+                        onClick={(event) => {
+                          if (!isWikilink || !wikiPath || !shouldHandleInApp(event)) return;
+                          event.preventDefault();
+                          onOpenWiki(wikiPath);
+                        }}
+                        {...props}
+                      >
+                        {children}
+                      </a>
+                    );
+                  },
+                }}
+              >
+                {markdownContent}
+              </ReactMarkdown>
+            )}
+          </div>
+        )}
+        {message.references && message.references.length > 0 && (
+          <div className="chat-references">
+            <strong>{t("chat.references")}</strong>
+            {message.references.map((reference, index) => {
+              const external = /^https?:\/\//i.test(reference.path);
+              const source = reference.kind === "source" || reference.path.startsWith("raw/sources/");
+              const href = external
+                ? reference.path
+                : makeHref({ view: source ? "sources" : "wiki", path: reference.path });
+              return (
+                <a
+                  key={`${reference.path}-${index}`}
+                  href={href}
+                  target={external ? "_blank" : undefined}
+                  rel={external ? "noreferrer" : undefined}
+                  onClick={(event) => {
+                    if (external || !shouldHandleInApp(event)) return;
+                    event.preventDefault();
+                    if (source) onOpenSource(reference.path);
+                    else onOpenWiki(reference.path);
+                  }}
+                >
+                  <span>{reference.title || reference.path}</span>
+                  <em>{reference.kind} · {reference.score?.toFixed(3) ?? t("common.unknown")}</em>
+                </a>
+              );
+            })}
+          </div>
+        )}
+        {message.toolEvents && message.toolEvents.length > 0 && (
+          <div className="chat-tool-events">
+            {message.toolEvents.map((event, index) => (
+              <span key={`${event.tool}-${index}`}>
+                {event.tool}: {event.status}{event.detail ? ` (${event.detail})` : ""}
+              </span>
+            ))}
+          </div>
+        )}
+        {message.usage && (
+          <div className="chat-usage">
+            {t("chat.usage", {
+              prompt: message.usage.promptChars ?? 0,
+              completion: message.usage.completionChars ?? 0,
+              references: message.usage.referenceCount ?? message.references?.length ?? 0,
+            })}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ChatComposer({
+  disabled,
+  mode,
+  setMode,
+  useWeb,
+  setUseWeb,
+  useAnyTxt,
+  setUseAnyTxt,
+  sending,
+  onSend,
+  onCancel,
+}: {
+  disabled: boolean;
+  mode: ApiChatMode;
+  setMode: (mode: ApiChatMode) => void;
+  useWeb: boolean;
+  setUseWeb: (value: boolean) => void;
+  useAnyTxt: boolean;
+  setUseAnyTxt: (value: boolean) => void;
+  sending: boolean;
+  onSend: (content: string, images: ApiChatImage[]) => Promise<void>;
+  onCancel: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [value, setValue] = useState("");
+  const [images, setImages] = useState<ApiChatImage[]>([]);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function addFiles(files: File[]) {
+    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+    if (imageFiles.length === 0) return;
+    const accepted: ApiChatImage[] = [];
+    let error: string | null = null;
+    let remaining = MAX_IMAGES_PER_MESSAGE - images.length;
+    for (const file of imageFiles) {
+      if (remaining <= 0) {
+        error = t("chat.tooManyImages", { max: MAX_IMAGES_PER_MESSAGE });
+        break;
+      }
+      if (!isAcceptedImageType(file.type)) {
+        error = t("chat.unsupportedImageType", { type: file.type || "?" });
+        continue;
+      }
+      if (file.size > MAX_IMAGE_BYTES) {
+        error = t("chat.imageTooLarge", { max: MAX_IMAGE_MB, name: file.name || "image" });
+        continue;
+      }
+      accepted.push(await fileToChatImage(file));
+      remaining -= 1;
+    }
+    if (accepted.length > 0) setImages((current) => [...current, ...accepted].slice(0, MAX_IMAGES_PER_MESSAGE));
+    setImageError(error);
+  }
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (disabled && !sending) return;
+    if (sending) {
+      void onCancel();
+      return;
+    }
+    const nextImages = images;
+    const text = value;
+    if (!text.trim() && nextImages.length === 0) return;
+    setValue("");
+    setImages([]);
+    setImageError(null);
+    void onSend(text, nextImages);
+  }
+
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const files: File[] = [];
+    for (const item of Array.from(event.clipboardData?.items ?? [])) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (files.length > 0) {
+      event.preventDefault();
+      void addFiles(files);
+    }
+  }
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      handleSubmit(event);
+    }
+  }
+
+  const modeLabel = t(`chat.modes.${mode === "local_first" ? "localFirst" : mode}`);
+  const activeSources = [t("chat.wiki"), ...(useWeb ? [t("chat.web")] : []), ...(useAnyTxt ? [t("chat.anytxt")] : [])].join(" · ");
+
+  return (
+    <form className="chat-composer" onSubmit={handleSubmit}>
+      <div className="chat-composer-topline">
+        <button
+          className="secondary-action chat-options-button"
+          type="button"
+          aria-expanded={optionsOpen}
+          aria-controls="chat-options-panel"
+          onClick={() => setOptionsOpen((open) => !open)}
+        >
+          <ChevronDown size={16} />
+          <span>{t("chat.options")}</span>
+        </button>
+        <span className="chat-active-options">
+          {t("chat.activeOptions", {
+            mode: modeLabel,
+            sources: activeSources,
+          })}
+        </span>
+      </div>
+      <div className={`chat-controls${optionsOpen ? " open" : ""}`} id="chat-options-panel">
+        <label className="chat-mode-control">
+          <span>{t("chat.mode")}</span>
+          <select value={mode} onChange={(event) => setMode(event.target.value as ApiChatMode)}>
+            <option value="fast">{t("chat.modes.fast")}</option>
+            <option value="standard">{t("chat.modes.standard")}</option>
+            <option value="deep">{t("chat.modes.deep")}</option>
+            <option value="local_first">{t("chat.modes.localFirst")}</option>
+          </select>
+        </label>
+        <label className="chat-toggle">
+          <input type="checkbox" checked readOnly />
+          {t("chat.wiki")}
+        </label>
+        <label className="chat-toggle">
+          <input type="checkbox" checked={useWeb} onChange={(event) => setUseWeb(event.target.checked)} />
+          <Globe2 size={15} />
+          {t("chat.web")}
+        </label>
+        <label className="chat-toggle">
+          <input type="checkbox" checked={useAnyTxt} onChange={(event) => setUseAnyTxt(event.target.checked)} />
+          {t("chat.anytxt")}
+        </label>
+      </div>
+      {images.length > 0 && (
+        <div className="chat-image-preview">
+          {images.map((image, index) => (
+            <span key={`${image.mediaType}-${index}`}>
+              <img src={chatImageToDataUrl(image)} alt="" />
+              <button
+                type="button"
+                aria-label={t("chat.removeImage")}
+                onClick={() => setImages((current) => current.filter((_, i) => i !== index))}
+              >
+                <X size={13} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {imageError && <div className="chat-image-error">{imageError}</div>}
+      <div className="chat-input-row">
+        <textarea
+          value={value}
+          onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setValue(event.target.value)}
+          onPaste={handlePaste}
+          onKeyDown={handleKeyDown}
+          placeholder={t("chat.placeholder")}
+          disabled={disabled}
+          rows={2}
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPTED_IMAGE_TYPES.join(",")}
+          multiple
+          hidden
+          onChange={(event) => {
+            const files = event.target.files ? Array.from(event.target.files) : [];
+            void addFiles(files);
+            event.target.value = "";
+          }}
+        />
+        <button
+          className="secondary-action icon-only"
+          type="button"
+          disabled={disabled}
+          aria-label={t("chat.attachImage")}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <ImagePlus size={18} />
+        </button>
+        <button
+          className="primary-action icon-only"
+          type="submit"
+          disabled={disabled && !sending}
+          aria-label={sending ? t("chat.cancel") : t("chat.send")}
+        >
+          {sending ? <Square size={17} /> : <Send size={17} />}
+        </button>
+      </div>
+      <p className="chat-hint">{t("chat.imageHint", { max: MAX_IMAGE_MB, count: MAX_IMAGES_PER_MESSAGE })}</p>
+    </form>
   );
 }
 
@@ -1809,6 +2907,9 @@ function SettingsView({
         <InfoTile label={t("settings.apiStatus")} value={health?.status ?? t("common.unknown")} />
         <InfoTile label={t("settings.apiEnabled")} value={String(health?.enabled ?? t("common.unknown"))} />
         <InfoTile label={t("settings.authRequired")} value={String(health?.authRequired ?? t("common.unknown"))} />
+        <InfoTile label={t("settings.lanAccess")} value={String(health?.allowLanAccess ?? t("common.unknown"))} />
+        <InfoTile label={t("settings.agentChat")} value={String(health?.agent?.chat ?? t("common.unknown"))} />
+        <InfoTile label={t("settings.agentStreaming")} value={String(health?.agent?.streaming ?? t("common.unknown"))} />
         <InfoTile label={t("settings.tokenSource")} value={health?.tokenSource ?? t("settings.proxyEnvBrowser")} />
         <InfoTile label={t("settings.currentProject")} value={project?.name ?? t("common.none")} />
         <InfoTile label={t("settings.projectPath")} value={project?.path ?? t("common.none")} />
@@ -1879,6 +2980,9 @@ function DetailsPanel({
         <InfoTile label={t("diagnostics.sourceFiles")} value={String(sourceCount)} />
         <InfoTile label={t("diagnostics.graphNodes")} value={String(graphNodes.length)} />
         <InfoTile label={t("diagnostics.reviewItems")} value={String(reviews.length)} />
+        <InfoTile label={t("diagnostics.lanAccess")} value={String(health?.allowLanAccess ?? t("common.unknown"))} />
+        <InfoTile label={t("diagnostics.agentChat")} value={String(health?.agent?.chat ?? t("common.unknown"))} />
+        <InfoTile label={t("diagnostics.agentStreaming")} value={String(health?.agent?.streaming ?? t("common.unknown"))} />
       </div>
       <div className="notice-box small">
         {t("diagnostics.notice")}

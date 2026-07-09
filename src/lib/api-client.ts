@@ -39,6 +39,56 @@ export interface ApiSearchResponse {
   vectorHits?: number;
 }
 
+export type ApiChatMode = "fast" | "standard" | "deep" | "local_first";
+
+export interface ApiChatImage {
+  mediaType: string;
+  dataBase64: string;
+}
+
+export interface ApiChatReference {
+  title: string;
+  path: string;
+  kind: string;
+  snippet?: string;
+  score?: number;
+}
+
+export interface ApiChatToolEvent {
+  tool: string;
+  status: string;
+  detail?: string;
+}
+
+export interface ApiChatEvent {
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface ApiChatMessage {
+  role: string;
+  content: string;
+}
+
+export interface ApiChatUsage {
+  promptChars?: number;
+  completionChars?: number;
+  referenceCount?: number;
+  toolEventCount?: number;
+}
+
+export interface ApiChatResponse {
+  projectId?: string;
+  sessionId: string;
+  mode?: ApiChatMode | string;
+  message: ApiChatMessage;
+  references: ApiChatReference[];
+  toolEvents: ApiChatToolEvent[];
+  events: ApiChatEvent[];
+  userInputRequest?: Record<string, unknown>;
+  usage?: ApiChatUsage;
+}
+
 export interface ApiGraphNode {
   id: string;
   label: string;
@@ -90,6 +140,12 @@ export interface ApiHealth {
   authRequired?: boolean;
   authConfigured?: boolean;
   allowUnauthenticated?: boolean;
+  allowLanAccess?: boolean;
+  agent?: {
+    chat?: boolean;
+    streaming?: boolean;
+    [key: string]: unknown;
+  };
   tokenSource?: string;
   [key: string]: unknown;
 }
@@ -204,6 +260,74 @@ export class LlmWikiApiClient {
     };
   }
 
+  async chat(
+    projectId = "current",
+    message: string,
+    options: {
+      sessionId?: string;
+      mode?: ApiChatMode;
+      topK?: number;
+      includeContent?: boolean;
+      wiki?: boolean;
+      web?: boolean;
+      anytxt?: boolean;
+      images?: ApiChatImage[];
+      history?: ApiChatMessage[];
+      historyExplicit?: boolean;
+      persistSession?: boolean;
+      signal?: AbortSignal;
+    } = {},
+  ): Promise<ApiChatResponse> {
+    const json = await this.request(`/projects/${encodeURIComponent(projectId)}/chat`, {
+      method: "POST",
+      body: {
+        message,
+        sessionId: options.sessionId,
+        persistSession: options.persistSession ?? true,
+        mode: options.mode,
+        topK: options.topK,
+        includeContent: options.includeContent,
+        history: options.history,
+        historyExplicit: options.historyExplicit,
+        tools: {
+          wiki: options.wiki ?? true,
+          web: options.web ?? false,
+          anytxt: options.anytxt ?? false,
+        },
+        images: options.images,
+      },
+      signal: options.signal,
+    });
+    const msg = requireObject(json.message, "chat message");
+    return {
+      projectId: typeof json.projectId === "string" ? json.projectId : undefined,
+      sessionId: typeof json.sessionId === "string" ? json.sessionId : "",
+      mode: typeof json.mode === "string" ? json.mode : undefined,
+      message: {
+        role: typeof msg.role === "string" ? msg.role : "assistant",
+        content: typeof msg.content === "string" ? msg.content : "",
+      },
+      references: Array.isArray(json.references) ? json.references.map(parseChatReference) : [],
+      toolEvents: Array.isArray(json.toolEvents) ? json.toolEvents.map(parseChatToolEvent) : [],
+      events: Array.isArray(json.events) ? json.events.map(parseChatEvent) : [],
+      userInputRequest: json.userInputRequest && typeof json.userInputRequest === "object"
+        ? (json.userInputRequest as Record<string, unknown>)
+        : undefined,
+      usage: parseChatUsage(json.usage),
+    };
+  }
+
+  async cancelChat(projectId = "current", sessionId: string): Promise<{ sessionId: string; cancelled: boolean }> {
+    const json = await this.request(
+      `/projects/${encodeURIComponent(projectId)}/chat/${encodeURIComponent(sessionId)}/cancel`,
+      { method: "POST" },
+    );
+    return {
+      sessionId: typeof json.sessionId === "string" ? json.sessionId : sessionId,
+      cancelled: json.cancelled === true,
+    };
+  }
+
   async graph(
     projectId = "current",
     options: { q?: string; nodeType?: string; limit?: number } = {},
@@ -234,6 +358,33 @@ export class LlmWikiApiClient {
     });
   }
 
+  async patchReview(
+    projectId = "current",
+    reviewId: string,
+    options: { resolved?: boolean; action?: string } = {},
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      `/projects/${encodeURIComponent(projectId)}/reviews/${encodeURIComponent(reviewId)}`,
+      { method: "PATCH", body: options },
+    );
+  }
+
+  async bulkResolveReviews(
+    projectId = "current",
+    ids: string[],
+    action?: string,
+  ): Promise<{ resolved: string[]; notFound: string[]; count: number }> {
+    const json = await this.request(`/projects/${encodeURIComponent(projectId)}/reviews/resolve`, {
+      method: "POST",
+      body: { ids, action },
+    });
+    return {
+      resolved: Array.isArray(json.resolved) ? json.resolved.map(String) : [],
+      notFound: Array.isArray(json.notFound) ? json.notFound.map(String) : [],
+      count: numberOrUndefined(json.count) ?? 0,
+    };
+  }
+
   async chatProbe(projectId = "current"): Promise<Record<string, unknown>> {
     return this.request(`/projects/${encodeURIComponent(projectId)}/chat`, {
       method: "POST",
@@ -243,7 +394,7 @@ export class LlmWikiApiClient {
 
   private async request(
     path: string,
-    options: { method?: "GET" | "POST"; body?: unknown; auth?: boolean } = {},
+    options: { method?: "GET" | "POST" | "PATCH"; body?: unknown; auth?: boolean; signal?: AbortSignal } = {},
   ): Promise<Record<string, unknown>> {
     const url = `${this.baseUrl}${apiPath(path)}`;
     const headers: Record<string, string> = { Accept: "application/json" };
@@ -258,6 +409,7 @@ export class LlmWikiApiClient {
         method: options.method ?? (options.body === undefined ? "GET" : "POST"),
         headers,
         body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        signal: options.signal,
       });
     } catch (err) {
       throw new Error(
@@ -324,6 +476,45 @@ function parseSearchResult(value: unknown): ApiSearchResult {
         })
       : [],
     vectorScore: numberOrUndefined(obj.vectorScore) ?? null,
+  };
+}
+
+function parseChatReference(value: unknown): ApiChatReference {
+  const obj = requireObject(value, "chat reference");
+  return {
+    title: String(obj.title ?? ""),
+    path: String(obj.path ?? ""),
+    kind: String(obj.kind ?? "wiki"),
+    snippet: typeof obj.snippet === "string" ? obj.snippet : undefined,
+    score: numberOrUndefined(obj.score),
+  };
+}
+
+function parseChatToolEvent(value: unknown): ApiChatToolEvent {
+  const obj = requireObject(value, "chat tool event");
+  return {
+    tool: String(obj.tool ?? ""),
+    status: String(obj.status ?? ""),
+    detail: typeof obj.detail === "string" ? obj.detail : undefined,
+  };
+}
+
+function parseChatEvent(value: unknown): ApiChatEvent {
+  const obj = requireObject(value, "chat event");
+  return {
+    ...obj,
+    type: String(obj.type ?? ""),
+  };
+}
+
+function parseChatUsage(value: unknown): ApiChatUsage | undefined {
+  if (value === undefined || value === null) return undefined;
+  const obj = requireObject(value, "chat usage");
+  return {
+    promptChars: numberOrUndefined(obj.promptChars),
+    completionChars: numberOrUndefined(obj.completionChars),
+    referenceCount: numberOrUndefined(obj.referenceCount),
+    toolEventCount: numberOrUndefined(obj.toolEventCount),
   };
 }
 
