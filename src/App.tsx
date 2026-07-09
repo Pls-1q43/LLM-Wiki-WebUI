@@ -24,6 +24,8 @@ import {
   ChevronDown,
   ChevronRight,
   CircleSlash,
+  Clock3,
+  Download,
   FileSearch,
   FileText,
   FolderOpen,
@@ -35,6 +37,7 @@ import {
   Menu,
   MessageSquare,
   MoreHorizontal,
+  Pencil,
   RefreshCw,
   Search,
   Send,
@@ -42,6 +45,8 @@ import {
   Settings,
   Square,
   Tag,
+  Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import {
@@ -70,8 +75,24 @@ import {
   fileToChatImage,
   isAcceptedImageType,
 } from "./lib/chat-image-utils";
+import {
+  chatHistoryExportFilename,
+  deleteChatHistoryEntry,
+  exportChatHistoryMarkdown,
+  importChatHistoryExport,
+  loadStoredChat,
+  parseChatHistoryMarkdown,
+  renameChatHistoryEntry,
+  saveStoredChat,
+  scanChatHistory,
+  upsertChatHistoryEntry,
+  type ChatHistoryEntry,
+  type ChatHistoryMessage,
+  type ChatHistoryRole,
+} from "./lib/chat-history";
 import { collectMarkdownFiles } from "./lib/full-graph";
 import { flattenFiles, lintReadOnly, type LintIssue } from "./lib/lint";
+import { normalizeWikiTarget, resolveWikiTarget, transformWikilinks } from "./lib/wiki-links";
 
 type View = "wiki" | "sources" | "search" | "graph" | "review" | "lint" | "chat" | "settings";
 type RootMode = "wiki" | "sources" | "all";
@@ -84,22 +105,8 @@ type AppUrlParams = {
   chatSession?: string | null;
 };
 
-type ChatRole = "user" | "assistant" | "system";
-
-interface WebuiChatMessage {
-  id: string;
-  role: ChatRole;
-  content: string;
-  images?: ApiChatImage[];
-  references?: ApiChatReference[];
-  toolEvents?: ApiChatToolEvent[];
-  usage?: {
-    promptChars?: number;
-    completionChars?: number;
-    referenceCount?: number;
-    toolEventCount?: number;
-  };
-}
+type WebuiChatMessage = ChatHistoryMessage;
+type ChatRole = ChatHistoryRole;
 
 const APP_DISPLAY_NAME = "LLM Wiki WebUI";
 
@@ -173,41 +180,6 @@ function newChatSessionId() {
 
 function newMessageId() {
   return `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function chatStorageKey(projectId: string, sessionId: string) {
-  return `llm-wiki-webui:chat:${projectId}:${sessionId}`;
-}
-
-function loadStoredChat(projectId: string, sessionId: string): WebuiChatMessage[] {
-  try {
-    const raw = window.localStorage.getItem(chatStorageKey(projectId, sessionId));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((item) => item && typeof item === "object")
-      .map((item) => ({
-        id: typeof item.id === "string" ? item.id : newMessageId(),
-        role: item.role === "assistant" || item.role === "system" ? item.role : "user",
-        content: typeof item.content === "string" ? item.content : "",
-        images: Array.isArray(item.images) ? item.images : undefined,
-        references: Array.isArray(item.references) ? item.references : undefined,
-        toolEvents: Array.isArray(item.toolEvents) ? item.toolEvents : undefined,
-        usage: item.usage && typeof item.usage === "object" ? item.usage : undefined,
-      }))
-      .slice(-40);
-  } catch {
-    return [];
-  }
-}
-
-function saveStoredChat(projectId: string, sessionId: string, messages: WebuiChatMessage[]) {
-  try {
-    window.localStorage.setItem(chatStorageKey(projectId, sessionId), JSON.stringify(messages.slice(-40)));
-  } catch {
-    // Local persistence is opportunistic; the native API can still hydrate session history.
-  }
 }
 
 function canUseNativeChat(health: ApiHealth | null) {
@@ -342,49 +314,6 @@ function parseMarkdownFrontmatter(content: string): ParsedMarkdown {
   return { frontmatter, body: content.slice(match[0].length) };
 }
 
-const WIKILINK_RE = /\[\[([^\]|\n]+)(?:\|([^\]\n]*))?\]\]/g;
-
-function transformWikilinks(body: string): string {
-  if (!body.includes("[[")) return body;
-  return body
-    .split(/(```[\s\S]*?```)/g)
-    .map((part, index) => {
-      if (index % 2 === 1) return part;
-      return part
-        .split(/(`[^`\n]+`)/g)
-        .map((inline, inlineIndex) => {
-          if (inlineIndex % 2 === 1) return inline;
-          return inline.replace(WIKILINK_RE, (_match, rawTarget: string, rawAlias?: string) => {
-            const target = rawTarget.trim();
-            const label = (rawAlias?.trim() || target).replace(/\[/g, "\\[").replace(/\]/g, "\\]");
-            return `[${label}](#${encodeURIComponent(target)})`;
-          });
-        })
-        .join("");
-    })
-    .join("");
-}
-
-function normalizeWikiTarget(value: string) {
-  return value
-    .replace(/\.md$/i, "")
-    .split("/")
-    .pop()!
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-");
-}
-
-function resolveWikiTarget(target: string, files: ApiFileNode[]) {
-  const flat = flattenFiles(files).filter((node) => !node.isDir && node.path.endsWith(".md"));
-  const normalized = normalizeWikiTarget(target);
-  return (
-    flat.find((node) => node.path === target || node.path === `wiki/${target}`)?.path ??
-    flat.find((node) => normalizeWikiTarget(node.path) === normalized)?.path ??
-    null
-  );
-}
-
 function unwrapWikiValue(value: string) {
   const trimmed = value.trim();
   const match = trimmed.match(/^\[\[([^\]|]+)(?:\|([^\]]+))?\]\]$/);
@@ -431,6 +360,9 @@ export function App() {
   const [chatUseWeb, setChatUseWeb] = useState(false);
   const [chatUseAnyTxt, setChatUseAnyTxt] = useState(false);
   const [chatSending, setChatSending] = useState(false);
+  const [chatHistory, setChatHistory] = useState<ChatHistoryEntry[]>([]);
+  const [isChatHistoryOpen, setIsChatHistoryOpen] = useState(false);
+  const [chatHistoryImportMessage, setChatHistoryImportMessage] = useState("");
   const isMobile = useMediaQuery("(max-width: 860px)");
   const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
   const [isMobileMoreOpen, setIsMobileMoreOpen] = useState(false);
@@ -496,6 +428,18 @@ export function App() {
     [reviewStatus],
   );
 
+  const refreshChatHistory = useCallback((projectId = selectedProject?.id ?? selectedProjectId) => {
+    if (!projectId) return [];
+    try {
+      const entries = scanChatHistory(window.localStorage, projectId);
+      setChatHistory(entries);
+      return entries;
+    } catch {
+      setChatHistory([]);
+      return [];
+    }
+  }, [selectedProject?.id, selectedProjectId]);
+
   const loadProjectData = useCallback(
     async (id: string) => {
       setLoading(t("common.loading"));
@@ -551,7 +495,7 @@ export function App() {
   useEffect(() => {
     if (!selectedProject) return;
     skipNextChatSaveRef.current = true;
-    setChatMessages(loadStoredChat(selectedProject.id, chatSessionId));
+    setChatMessages(loadStoredChat(window.localStorage, selectedProject.id, chatSessionId));
   }, [chatSessionId, selectedProject?.id]);
 
   useEffect(() => {
@@ -560,8 +504,17 @@ export function App() {
       skipNextChatSaveRef.current = false;
       return;
     }
-    saveStoredChat(selectedProject.id, chatSessionId, chatMessages);
+    try {
+      saveStoredChat(window.localStorage, selectedProject.id, chatSessionId, chatMessages);
+      setChatHistory(upsertChatHistoryEntry(window.localStorage, selectedProject.id, chatSessionId, chatMessages));
+    } catch {
+      // Browser storage can be full or disabled; chat still works for the current page session.
+    }
   }, [chatMessages, chatSessionId, selectedProject?.id]);
+
+  useEffect(() => {
+    refreshChatHistory(selectedProject?.id);
+  }, [refreshChatHistory, selectedProject?.id]);
 
   useEffect(() => {
     if (activeView !== "graph" || !selectedProject || files.length === 0) return;
@@ -716,6 +669,94 @@ export function App() {
     setChatMessages([]);
     setActiveView("chat");
   }, []);
+
+  const openChatHistory = useCallback(() => {
+    refreshChatHistory();
+    setChatHistoryImportMessage("");
+    setIsChatHistoryOpen(true);
+  }, [refreshChatHistory]);
+
+  const closeChatHistory = useCallback(() => {
+    setIsChatHistoryOpen(false);
+  }, []);
+
+  const selectChatHistory = useCallback((sessionId: string) => {
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = null;
+    setChatSending(false);
+    setChatSessionId(sessionId);
+    setActiveView("chat");
+    setIsChatHistoryOpen(false);
+  }, []);
+
+  const renameChatHistory = useCallback(
+    (sessionId: string, title: string) => {
+      if (!selectedProject) return;
+      try {
+        setChatHistory(renameChatHistoryEntry(window.localStorage, selectedProject.id, sessionId, title));
+      } catch {
+        setError(t("chat.historyStorageError"));
+      }
+    },
+    [selectedProject, t],
+  );
+
+  const deleteChatHistory = useCallback(
+    (sessionId: string) => {
+      if (!selectedProject) return;
+      try {
+        const entries = deleteChatHistoryEntry(window.localStorage, selectedProject.id, sessionId);
+        setChatHistory(entries);
+        if (sessionId === chatSessionId) {
+          setChatSessionId(newChatSessionId());
+          setChatMessages([]);
+        }
+      } catch {
+        setError(t("chat.historyStorageError"));
+      }
+    },
+    [chatSessionId, selectedProject, t],
+  );
+
+  const exportChatHistory = useCallback(
+    (entry: ChatHistoryEntry) => {
+      if (!selectedProject) return;
+      const messages = loadStoredChat(window.localStorage, selectedProject.id, entry.sessionId);
+      const markdown = exportChatHistoryMarkdown(selectedProject.id, entry, messages);
+      const url = URL.createObjectURL(new Blob([markdown], { type: "text/markdown;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = chatHistoryExportFilename(entry);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    },
+    [selectedProject],
+  );
+
+  const importChatHistoryFiles = useCallback(
+    async (files: File[]) => {
+      const projectId = selectedProject?.id ?? selectedProjectId;
+      if (!projectId || files.length === 0) return;
+      let imported = 0;
+      let skipped = 0;
+      let conflicts = 0;
+      for (const file of files) {
+        try {
+          const parsed = parseChatHistoryMarkdown(await file.text());
+          const result = importChatHistoryExport(window.localStorage, projectId, parsed, newChatSessionId);
+          imported += 1;
+          if (result.conflict) conflicts += 1;
+        } catch {
+          skipped += 1;
+        }
+      }
+      setChatHistory(scanChatHistory(window.localStorage, projectId));
+      setChatHistoryImportMessage(t("chat.historyImportResult", { imported, skipped, conflicts }));
+    },
+    [selectedProject?.id, selectedProjectId, t],
+  );
 
   const sendChatMessage = useCallback(
     async (content: string, images: ApiChatImage[]) => {
@@ -1036,6 +1077,8 @@ export function App() {
           <ChatView
             health={health}
             messages={chatMessages}
+            files={files}
+            projectName={selectedProject?.name || selectedProject?.id || selectedProjectId}
             mode={chatMode}
             setMode={setChatMode}
             useWeb={chatUseWeb}
@@ -1044,7 +1087,17 @@ export function App() {
             setUseAnyTxt={setChatUseAnyTxt}
             sending={chatSending}
             sessionId={chatSessionId}
+            historyEntries={chatHistory}
+            historyOpen={isChatHistoryOpen}
+            historyImportMessage={chatHistoryImportMessage}
             onNewChat={startNewChat}
+            onOpenHistory={openChatHistory}
+            onCloseHistory={closeChatHistory}
+            onSelectHistory={selectChatHistory}
+            onRenameHistory={renameChatHistory}
+            onDeleteHistory={deleteChatHistory}
+            onExportHistory={exportChatHistory}
+            onImportHistory={importChatHistoryFiles}
             onSend={sendChatMessage}
             onCancel={cancelChat}
             onOpenWiki={(path) => openPath(path, "wiki")}
@@ -2082,6 +2135,8 @@ function ReviewView({
 function ChatView({
   health,
   messages,
+  files,
+  projectName,
   mode,
   setMode,
   useWeb,
@@ -2090,7 +2145,17 @@ function ChatView({
   setUseAnyTxt,
   sending,
   sessionId,
+  historyEntries,
+  historyOpen,
+  historyImportMessage,
   onNewChat,
+  onOpenHistory,
+  onCloseHistory,
+  onSelectHistory,
+  onRenameHistory,
+  onDeleteHistory,
+  onExportHistory,
+  onImportHistory,
   onSend,
   onCancel,
   onOpenWiki,
@@ -2099,6 +2164,8 @@ function ChatView({
 }: {
   health: ApiHealth | null;
   messages: WebuiChatMessage[];
+  files: ApiFileNode[];
+  projectName: string;
   mode: ApiChatMode;
   setMode: (mode: ApiChatMode) => void;
   useWeb: boolean;
@@ -2107,7 +2174,17 @@ function ChatView({
   setUseAnyTxt: (value: boolean) => void;
   sending: boolean;
   sessionId: string;
+  historyEntries: ChatHistoryEntry[];
+  historyOpen: boolean;
+  historyImportMessage: string;
   onNewChat: () => void;
+  onOpenHistory: () => void;
+  onCloseHistory: () => void;
+  onSelectHistory: (sessionId: string) => void;
+  onRenameHistory: (sessionId: string, title: string) => void;
+  onDeleteHistory: (sessionId: string) => void;
+  onExportHistory: (entry: ChatHistoryEntry) => void;
+  onImportHistory: (files: File[]) => Promise<void>;
   onSend: (content: string, images: ApiChatImage[]) => Promise<void>;
   onCancel: () => Promise<void>;
   onOpenWiki: (path: string) => void;
@@ -2116,20 +2193,26 @@ function ChatView({
 }) {
   const { t } = useTranslation();
   const chatAvailable = canUseNativeChat(health);
-  const streaming = health?.agent?.streaming === true;
 
   return (
-    <article className="view-stack chat-view">
-      <header className="reader-header chat-header">
-        <div>
+    <article className="chat-workbench">
+      <header className="chat-header">
+        <div className="chat-title-group">
           <p className="eyebrow">{t("chat.eyebrow")}</p>
-          <h2>{t("chat.heading")}</h2>
+          <h2>{t("chat.heading", { project: projectName })}</h2>
+          <div className="chat-session-meta" title={sessionId}>
+            <span>{t("chat.session")}</span>
+            <code>{sessionId}</code>
+          </div>
         </div>
         <div className="chat-header-actions">
-          <span className="status-pill">{streaming ? t("chat.streaming") : t("chat.nonStreaming")}</span>
-          <button className="secondary-action" type="button" onClick={onNewChat}>
+          <button className="secondary-action" type="button" onClick={onOpenHistory} aria-label={t("chat.openHistory")}>
+            <Clock3 size={17} />
+            <span>{t("chat.history")}</span>
+          </button>
+          <button className="secondary-action" type="button" onClick={onNewChat} aria-label={t("chat.newChat")}>
             <MessageSquare size={17} />
-            {t("chat.newChat")}
+            <span>{t("chat.newChat")}</span>
           </button>
         </div>
       </header>
@@ -2138,12 +2221,7 @@ function ChatView({
         <div className="notice-box">{t("chat.unavailable")}</div>
       )}
 
-      <div className="chat-session-meta">
-        <span>{t("chat.session")}</span>
-        <code>{sessionId}</code>
-      </div>
-
-      <div className="chat-messages" aria-live="polite">
+      <div className="chat-messages" aria-live="polite" role="log">
         {messages.length === 0 ? (
           <EmptyState title={t("chat.emptyTitle")} body={t("chat.emptyBody")} />
         ) : (
@@ -2151,6 +2229,7 @@ function ChatView({
             <ChatMessageBubble
               key={message.id}
               message={message}
+              files={files}
               makeHref={makeHref}
               onOpenWiki={onOpenWiki}
               onOpenSource={onOpenSource}
@@ -2177,23 +2256,242 @@ function ChatView({
         onSend={onSend}
         onCancel={onCancel}
       />
+      <ChatHistoryDrawer
+        entries={historyEntries}
+        currentSessionId={sessionId}
+        open={historyOpen}
+        importMessage={historyImportMessage}
+        onClose={onCloseHistory}
+        onSelect={onSelectHistory}
+        onRename={onRenameHistory}
+        onDelete={onDeleteHistory}
+        onExport={onExportHistory}
+        onImport={onImportHistory}
+      />
     </article>
+  );
+}
+
+function ChatHistoryDrawer({
+  entries,
+  currentSessionId,
+  open,
+  importMessage,
+  onClose,
+  onSelect,
+  onRename,
+  onDelete,
+  onExport,
+  onImport,
+}: {
+  entries: ChatHistoryEntry[];
+  currentSessionId: string;
+  open: boolean;
+  importMessage: string;
+  onClose: () => void;
+  onSelect: (sessionId: string) => void;
+  onRename: (sessionId: string, title: string) => void;
+  onDelete: (sessionId: string) => void;
+  onExport: (entry: ChatHistoryEntry) => void;
+  onImport: (files: File[]) => Promise<void>;
+}) {
+  const { t, i18n } = useTranslation();
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [importing, setImporting] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        if (openMenuId || renameSessionId) {
+          setOpenMenuId(null);
+          setRenameSessionId(null);
+        } else {
+          onClose();
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, open, openMenuId, renameSessionId]);
+
+  useEffect(() => {
+    if (!openMenuId) return;
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".chat-history-menu-wrap")) return;
+      setOpenMenuId(null);
+    }
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [openMenuId]);
+
+  if (!open) return null;
+
+  const dateFormatter = new Intl.DateTimeFormat(i18n.language, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  function startRename(entry: ChatHistoryEntry) {
+    setOpenMenuId(null);
+    setRenameSessionId(entry.sessionId);
+    setRenameValue(entry.title);
+  }
+
+  function submitRename(event: FormEvent, entry: ChatHistoryEntry) {
+    event.preventDefault();
+    onRename(entry.sessionId, renameValue);
+    setRenameSessionId(null);
+  }
+
+  function deleteEntry(entry: ChatHistoryEntry) {
+    setOpenMenuId(null);
+    if (!window.confirm(t("chat.historyDeleteConfirm", { title: entry.title || entry.sessionId }))) return;
+    onDelete(entry.sessionId);
+  }
+
+  async function handleImport(files: FileList | null) {
+    const items = files ? Array.from(files) : [];
+    if (items.length === 0) return;
+    setImporting(true);
+    try {
+      await onImport(items);
+    } finally {
+      setImporting(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  }
+
+  return (
+    <div className="chat-history-layer" role="presentation">
+      <button className="chat-history-scrim" type="button" aria-label={t("chat.closeHistory")} onClick={onClose} />
+      <aside className="chat-history-drawer" aria-label={t("chat.history")}>
+        <header className="chat-history-header">
+          <div>
+            <p className="eyebrow">{t("chat.history")}</p>
+            <h3>{t("chat.historyTitle")}</h3>
+          </div>
+          <div className="chat-history-header-actions">
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".md,text/markdown,text/plain"
+              multiple
+              hidden
+              onChange={(event) => void handleImport(event.target.files)}
+            />
+            <button
+              className="secondary-action"
+              type="button"
+              disabled={importing}
+              onClick={() => importInputRef.current?.click()}
+              aria-label={t("chat.historyImport")}
+            >
+              <Upload size={17} />
+              <span>{importing ? t("chat.historyImporting") : t("chat.historyImport")}</span>
+            </button>
+            <button className="secondary-action icon-only" type="button" onClick={onClose} aria-label={t("chat.closeHistory")}>
+              <X size={17} />
+            </button>
+          </div>
+        </header>
+        <div className="chat-history-notice">{t("chat.historyLocalNotice")}</div>
+        {importMessage && <div className="chat-history-import-status">{importMessage}</div>}
+        <div className="chat-history-list">
+          {entries.length === 0 ? (
+            <EmptyState title={t("chat.historyEmptyTitle")} body={t("chat.historyEmptyBody")} />
+          ) : (
+            entries.map((entry) => {
+              const active = entry.sessionId === currentSessionId;
+              const renaming = renameSessionId === entry.sessionId;
+              return (
+                <section className={`chat-history-item${active ? " active" : ""}`} key={entry.sessionId}>
+                  {renaming ? (
+                    <form className="chat-history-rename" onSubmit={(event) => submitRename(event, entry)}>
+                      <input
+                        value={renameValue}
+                        onChange={(event) => setRenameValue(event.target.value)}
+                        aria-label={t("chat.historyRename")}
+                        autoFocus
+                      />
+                      <button className="primary-action" type="submit">{t("common.apply")}</button>
+                      <button className="secondary-action" type="button" onClick={() => setRenameSessionId(null)}>
+                        {t("common.cancel")}
+                      </button>
+                    </form>
+                  ) : (
+                    <>
+                      <button className="chat-history-main" type="button" onClick={() => onSelect(entry.sessionId)}>
+                        <strong>{entry.title || t("chat.historyUntitled")}</strong>
+                        <span>{entry.preview || entry.sessionId}</span>
+                        <em>
+                          {dateFormatter.format(new Date(entry.updatedAt))} · {t("chat.historyMessageCount", { count: entry.messageCount })}
+                        </em>
+                      </button>
+                      <div className="chat-history-menu-wrap">
+                        <button
+                          className="secondary-action icon-only"
+                          type="button"
+                          aria-label={t("chat.historyActions")}
+                          aria-expanded={openMenuId === entry.sessionId}
+                          onClick={() => setOpenMenuId((current) => current === entry.sessionId ? null : entry.sessionId)}
+                        >
+                          <MoreHorizontal size={17} />
+                        </button>
+                        {openMenuId === entry.sessionId && (
+                          <div className="chat-history-menu" role="menu">
+                            <button type="button" role="menuitem" onClick={() => startRename(entry)}>
+                              <Pencil size={15} />
+                              {t("chat.historyRename")}
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => { setOpenMenuId(null); onExport(entry); }}>
+                              <Download size={15} />
+                              {t("chat.historyExport")}
+                            </button>
+                            <button className="danger" type="button" role="menuitem" onClick={() => deleteEntry(entry)}>
+                              <Trash2 size={15} />
+                              {t("chat.historyDelete")}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </section>
+              );
+            })
+          )}
+        </div>
+      </aside>
+    </div>
   );
 }
 
 function ChatMessageBubble({
   message,
+  files,
   makeHref,
   onOpenWiki,
   onOpenSource,
 }: {
   message: WebuiChatMessage;
+  files: ApiFileNode[];
   makeHref: (params: AppUrlParams) => string;
   onOpenWiki: (path: string) => void;
   onOpenSource: (path: string) => void;
 }) {
   const { t } = useTranslation();
   const isUser = message.role === "user";
+  const markdownContent = useMemo(
+    () => (isUser || message.role === "system" ? message.content : transformWikilinks(message.content)),
+    [isUser, message.content, message.role],
+  );
   return (
     <section className={`chat-message ${message.role}`}>
       <div className="chat-avatar">{isUser ? "U" : message.role === "system" ? "!" : "AI"}</div>
@@ -2210,7 +2508,42 @@ function ChatMessageBubble({
             {isUser || message.role === "system" ? (
               <p>{message.content}</p>
             ) : (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  a: ({ href, children, ...props }) => {
+                    const isWikilink = typeof href === "string" && href.startsWith("#");
+                    const rawTarget = isWikilink
+                      ? (() => {
+                          try {
+                            return decodeURIComponent(href.slice(1));
+                          } catch {
+                            return href.slice(1);
+                          }
+                        })()
+                      : "";
+                    const wikiPath = isWikilink ? resolveWikiTarget(rawTarget, files) : null;
+                    const linkHref = wikiPath ? makeHref({ view: "wiki", path: wikiPath }) : href;
+                    return (
+                      <a
+                        href={linkHref}
+                        className={isWikilink ? `wiki-link${wikiPath ? "" : " unresolved"}` : undefined}
+                        title={isWikilink && !wikiPath ? t("chat.unresolvedWikilink", { target: rawTarget }) : undefined}
+                        onClick={(event) => {
+                          if (!isWikilink || !wikiPath || !shouldHandleInApp(event)) return;
+                          event.preventDefault();
+                          onOpenWiki(wikiPath);
+                        }}
+                        {...props}
+                      >
+                        {children}
+                      </a>
+                    );
+                  },
+                }}
+              >
+                {markdownContent}
+              </ReactMarkdown>
             )}
           </div>
         )}
@@ -2293,6 +2626,7 @@ function ChatComposer({
   const [value, setValue] = useState("");
   const [images, setImages] = useState<ApiChatImage[]>([]);
   const [imageError, setImageError] = useState<string | null>(null);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function addFiles(files: File[]) {
@@ -2358,10 +2692,31 @@ function ChatComposer({
     }
   }
 
+  const modeLabel = t(`chat.modes.${mode === "local_first" ? "localFirst" : mode}`);
+  const activeSources = [t("chat.wiki"), ...(useWeb ? [t("chat.web")] : []), ...(useAnyTxt ? [t("chat.anytxt")] : [])].join(" · ");
+
   return (
     <form className="chat-composer" onSubmit={handleSubmit}>
-      <div className="chat-controls">
-        <label>
+      <div className="chat-composer-topline">
+        <button
+          className="secondary-action chat-options-button"
+          type="button"
+          aria-expanded={optionsOpen}
+          aria-controls="chat-options-panel"
+          onClick={() => setOptionsOpen((open) => !open)}
+        >
+          <ChevronDown size={16} />
+          <span>{t("chat.options")}</span>
+        </button>
+        <span className="chat-active-options">
+          {t("chat.activeOptions", {
+            mode: modeLabel,
+            sources: activeSources,
+          })}
+        </span>
+      </div>
+      <div className={`chat-controls${optionsOpen ? " open" : ""}`} id="chat-options-panel">
+        <label className="chat-mode-control">
           <span>{t("chat.mode")}</span>
           <select value={mode} onChange={(event) => setMode(event.target.value as ApiChatMode)}>
             <option value="fast">{t("chat.modes.fast")}</option>
@@ -2389,7 +2744,11 @@ function ChatComposer({
           {images.map((image, index) => (
             <span key={`${image.mediaType}-${index}`}>
               <img src={chatImageToDataUrl(image)} alt="" />
-              <button type="button" onClick={() => setImages((current) => current.filter((_, i) => i !== index))}>
+              <button
+                type="button"
+                aria-label={t("chat.removeImage")}
+                onClick={() => setImages((current) => current.filter((_, i) => i !== index))}
+              >
                 <X size={13} />
               </button>
             </span>
@@ -2419,10 +2778,21 @@ function ChatComposer({
             event.target.value = "";
           }}
         />
-        <button className="secondary-action icon-only" type="button" disabled={disabled} onClick={() => fileInputRef.current?.click()}>
+        <button
+          className="secondary-action icon-only"
+          type="button"
+          disabled={disabled}
+          aria-label={t("chat.attachImage")}
+          onClick={() => fileInputRef.current?.click()}
+        >
           <ImagePlus size={18} />
         </button>
-        <button className="primary-action icon-only" type="submit" disabled={disabled && !sending}>
+        <button
+          className="primary-action icon-only"
+          type="submit"
+          disabled={disabled && !sending}
+          aria-label={sending ? t("chat.cancel") : t("chat.send")}
+        >
           {sending ? <Square size={17} /> : <Send size={17} />}
         </button>
       </div>
